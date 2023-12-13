@@ -68,6 +68,7 @@ pub enum Events {
 #[derive(Debug)]
 pub struct Action {
     pub process: String,
+    pub pid: u32,
     pub cpu: u32,
     pub timestamp: f64,
     pub event: Events,
@@ -114,10 +115,16 @@ fn get_event(part: &Vec<&str>, event_type: &str) -> Events {
             let mut index = 4;
             let mut command: Vec<&str> = part[index].split(":").collect();
             let pid: u32;
-            if String::from(command.pop().unwrap()).parse().is_err() {
+            let temp = String::from(command.pop().unwrap()).parse::<u32>();
+            if temp.is_err() {
                 index += 1;
                 command = part[index].split(":").collect();
-                pid = String::from(command.pop().unwrap()).parse().unwrap();
+                pid = String::from(command.pop().unwrap()).parse::<u32>().unwrap();
+                command.insert(0, part[index - 1]);
+                command.join(" ");
+            } 
+            else {
+                pid = temp.unwrap();
             }
             let command = String::from(command.remove(0)).parse().unwrap();
             let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
@@ -136,17 +143,44 @@ fn get_event(part: &Vec<&str>, event_type: &str) -> Events {
             Events::SchedMigrateTask { base, orig_cpu, dest_cpu }
         }
         "sched_switch" => {
-            let mut old_command: Vec<&str> = part[4].split(":").collect();
-            let old_pid: u32 = String::from(old_command.pop().unwrap()).parse().unwrap();
-            let old_command = String::from(old_command.remove(0)).parse().unwrap();
-            let old_priority: i32 = String::from(part[5]).replace(&['[', ']'][..], "").parse().unwrap();
+            let mut index = 4;
+            let mut old_command: Vec<&str> = part[index].split(":").collect();
+            let old_pid: u32;
+            let temp = String::from(old_command.pop().unwrap()).parse::<u32>();
+            if temp.is_err() {
+                index += 1;
+                old_command = part[index].split(":").collect();
+                old_pid = String::from(old_command.pop().unwrap()).parse::<u32>().unwrap();
+                // let old_command = old_command.join(":");
+                old_command.insert(0, part[index - 1]);
+            } 
+            else {
+                old_pid = temp.unwrap();
+            }
+            let old_command = old_command.join(" ");
+            // let old_command = String::from(old_command.remove(0)).parse().unwrap();
+            let old_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             
-            let state = String::from(part[6]);
+            let state = String::from(part[index + 2]);
 
-            let mut new_command: Vec<&str> = part[8].split(":").collect();
-            let new_pid: u32 = String::from(new_command.pop().unwrap()).parse().unwrap();
-            let new_command = String::from(new_command.remove(0)).parse().unwrap();
-            let new_priority: i32 = String::from(part[9]).replace(&['[', ']'][..], "").parse().unwrap();
+
+            let mut index = 8;
+            let mut new_command: Vec<&str> = part[index].split(":").collect();
+            let new_pid: u32;
+            let temp = String::from(new_command.pop().unwrap()).parse::<u32>();
+            if temp.is_err() {
+                index += 1;
+                new_command = part[index].split(":").collect();
+                new_pid = String::from(new_command.pop().unwrap()).parse::<u32>().unwrap();
+                new_command.insert(0, part[index - 1]);
+            } 
+            else {
+                new_pid = temp.unwrap();
+            }
+            println!("{:?}", new_command);
+            let new_command = new_command.join(" ");
+            // let new_command = String::from(new_command.remove(0)).parse().unwrap();
+            let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
 
             let old_base = Base { command: old_command, pid: old_pid, priority: old_priority };
             let new_base = Base { command: new_command, pid: new_pid, priority: new_priority };
@@ -210,22 +244,37 @@ fn get_event(part: &Vec<&str>, event_type: &str) -> Events {
 }
 
 fn get_action(part: &Vec<&str>) -> Action {
-    let process = String::from(part[0]);
-    let cpu: u32 = String::from(part[1]).replace(&['[', ']'][..], "").parse().unwrap();
-    let mut timestamp = String::from(part[2]);
+    let mut index = 0;
+    let mut process: Vec<&str> = part[index].split("-").collect();
+    let pid: u32;
+    let temp = String::from(process.pop().unwrap()).parse::<u32>();
+    if temp.is_err() {
+        index += 1;
+        process = part[index].split("-").collect();
+        pid = String::from(process.pop().unwrap()).parse::<u32>().unwrap();
+        // let old_command = old_command.join(":");
+        process.insert(0, part[index - 1]);
+    } 
+    else {
+        pid = temp.unwrap();
+    }
+    let process = process.join("-");
+
+    let cpu: u32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
+    let mut timestamp = String::from(part[index + 2]);
     timestamp.pop();
     let timestamp: f64 = timestamp.parse().unwrap();
-    let mut event_type = String::from(part[3]);
+    let mut event_type = String::from(part[index + 3]);
     event_type.pop();
 
     let event = get_event(part, &event_type);
 
     // actions.insert(process.clone(), Action {process, cpu, timestamp, event });
-    Action {process, cpu, timestamp, event}
+    Action {process, pid, cpu, timestamp, event}
 }
 
 pub fn parse_file() -> (u32, Vec<Action>) {
-    if let Ok(mut lines) = read_lines("./src/main_report.dat") {
+    if let Ok(mut lines) = read_lines("./src/report.dat") {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
 
@@ -238,6 +287,7 @@ pub fn parse_file() -> (u32, Vec<Action>) {
                 line_no += 1;
             }
         }
+        dbg!(&actions);
         (cpu_count, actions)
     }
     else {
