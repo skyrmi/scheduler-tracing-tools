@@ -50,6 +50,12 @@ pub enum Events {
         pid: u32,
         old_pid: u32,
     },
+    SchedProcessFork {
+        command: String,
+        pid: u32,
+        child_command: String,
+        child_pid: u32,
+    },
     SchedProcessExit {
         base: Base
     },
@@ -61,8 +67,7 @@ pub enum Events {
         src: NumaArgs,
         dest: NumaArgs
     },
-
-    Empty
+    NotSupported
 }
 
 #[derive(Debug)]
@@ -102,16 +107,6 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedWakeIdleNoIpi { cpu }
         }
         "sched_wakeup" => {
-            // let mut index = 4;
-            // let mut command: Vec<&str> = part[index].split(":").collect();
-            // let pid: u32 = String::from(command.pop().unwrap()).parse().unwrap();
-            // let command = String::from(command.remove(0)).parse().unwrap();
-            // let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
-            // let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
-
-            // let base = Base { command, pid, priority };
-            // Events::SchedWakeup { base, cpu }
-
             let mut index = index + 4;
             let mut command: Vec<&str> = part[index].split(":").collect();
             let pid: u32;
@@ -179,7 +174,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             else {
                 new_pid = temp.unwrap();
             }
-            println!("{:?}", new_command);
+            // println!("{:?}", new_command);
             let new_command = new_command.join(" ");
             // let new_command = String::from(new_command.remove(0)).parse().unwrap();
             let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
@@ -197,6 +192,21 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
 
             let base = Base { command, pid, priority };
             Events::SchedProcessFree { base }
+        },
+        "sched_process_exec" => {
+            let index = index + 4;
+            let filename = String::from(part[index]).replace("filename=", "");
+            let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
+            let old_pid: u32 = String::from(part[index + 2]).replace("old_pid=", "").parse().unwrap();
+            Events::SchedProcessExec { filename, pid, old_pid }
+        },
+        "sched_process_fork" => {
+            let index = index + 4;
+            let command = String::from(part[index]).replace("comm=", "");
+            let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
+            let child_command = String::from(part[index + 2]).replace("child_comm=", "");
+            let child_pid: u32 = String::from(part[index + 3]).replace("child_pid=", "").parse().unwrap();
+            Events::SchedProcessFork { command, pid, child_command, child_pid }
         },
         "sched_process_exit" => {
             let index = index + 4;
@@ -245,7 +255,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
             Events::SchedStickNuma { src, dest }
         }
-        _ => Events::Empty
+        _ => Events::NotSupported
     }
 }
 
@@ -284,16 +294,16 @@ pub fn parse_file() -> (u32, Vec<Action>) {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
 
-        let mut line_no = 2;
+        // let mut line_no = 2;
         for line in lines {
             if let Ok(ip) = line {
                 let part: Vec<&str> = ip.split_whitespace().collect();
                 actions.push(get_action(&part));
-                println!("{} {:?} \n", line_no, actions.last());
-                line_no += 1;
+                // println!("{} {:?} \n", line_no, actions.last());
+                // line_no += 1;
             }
         }
-        dbg!(&actions);
+        // dbg!(&actions);
         (cpu_count, actions)
     }
     else {
