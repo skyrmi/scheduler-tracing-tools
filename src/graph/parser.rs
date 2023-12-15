@@ -67,6 +67,10 @@ pub enum Events {
         src: NumaArgs,
         dest: NumaArgs
     },
+    SchedMoveNuma {
+        src: NumaArgs,
+        dest: NumaArgs,
+    },
     NotSupported
 }
 
@@ -254,7 +258,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
 
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
             Events::SchedStickNuma { src, dest }
-        }
+        },
         _ => Events::NotSupported
     }
 }
@@ -290,7 +294,7 @@ fn get_action(part: &Vec<&str>) -> Action {
 }
 
 pub fn parse_file() -> (u32, Vec<Action>) {
-    if let Ok(mut lines) = read_lines("./src/main_report.dat") {
+    if let Ok(mut lines) = read_lines("./input/main_report.dat") {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
 
