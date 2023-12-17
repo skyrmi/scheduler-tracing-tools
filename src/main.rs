@@ -3,5 +3,5 @@ pub mod graph;
 use graph::*;
 
 fn main() {
-    data_graph();
+    data_graph(true);
 }

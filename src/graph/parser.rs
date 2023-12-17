@@ -2,6 +2,7 @@ use core::panic;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct Base {
@@ -308,6 +309,13 @@ pub fn parse_file() -> (u32, Vec<Action>) {
             }
         }
         // dbg!(&actions);
+        // for action in &actions {
+        //     if let Events::SchedSwitch { old_base, state, new_base } = &action.event {
+        //         if old_base.pid == 0 {
+        //             dbg!(&old_base);
+        //         }
+        //     }
+        // }
         (cpu_count, actions)
     }
     else {

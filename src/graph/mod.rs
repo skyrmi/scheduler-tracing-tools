@@ -1,84 +1,175 @@
 pub mod parser;
 
-use rand::Rng;
-use std::iter::Iterator;
+use rand::{Rng, random};
 use std::collections::HashMap;
-use plotters::prelude::*;
 use crate::parser::*;
+use plotly::common::{
+    ColorScale, ColorScalePalette, DashType, Fill, Font, Line, LineShape, Marker, Mode, Title, Label, MarkerSymbol,
+};
+use plotly::layout::{
+    Axis, GridPattern, Layout, LayoutGrid, Margin, Shape, ShapeLayer, ShapeLine,
+    ShapeType, self, NewShape, Annotation,
+};
+
+use plotly::{Scatter};
+use plotly::{Plot, ImageFormat};
+use plotly::color::{Rgb, NamedColor};
 
 
-pub fn data_graph() {
-    let (cpu_count, actions) = parse_file();
-    let duration = actions.last().unwrap().timestamp - actions.first().unwrap().timestamp;
+fn random_color() -> Rgb {
+    Rgb::new(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255))
+}
 
-    let mut pid_color: HashMap<u32, RGBColor> = HashMap::new();
-    for action in &actions {
+
+fn color_by_pid(actions: &Vec<Action>) -> HashMap<u32, Rgb> {
+    let mut pid_color: HashMap<u32, Rgb> = HashMap::new();
+    for action in actions {
         if let Events::SchedSwitch { old_base, state: _, new_base } = &action.event {
             if let None = pid_color.get(&old_base.pid) {
-                pid_color.insert(old_base.pid, RGBColor(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255)));
+                pid_color.insert(old_base.pid, random_color());
             }
             if let None = pid_color.get(&new_base.pid) {
-                pid_color.insert(new_base.pid, RGBColor(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255)));
+                pid_color.insert(new_base.pid, random_color());
 
             }
         }
     }
-    pid_color.insert(0, WHITE);
-    // dbg!(&pid_color);
+    pid_color.insert(0, Rgb::new(255, 255, 255));
+    pid_color
+}
 
+
+fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> {
     let mut data: HashMap<u32, Vec<&Action>> = HashMap::new();
-    for action in &actions {
+    for action in actions {
         if let Events::SchedSwitch { .. } = &action.event {
             let entry = data.entry(action.cpu).or_insert_with(Vec::new);
             entry.push(action);
         }
     }
-    // dbg!(&data);
+    data
+}
 
-
-    let root_area = SVGBackend::new("./output/image.svg", (1920, 1080)).into_drawing_area();
-    root_area.fill(&WHITE).unwrap();
-
-    let mut ctx = ChartBuilder::on(&root_area)
-        .set_label_area_size(LabelAreaPosition::Left, 40)
-        .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .caption("Data graph", ("sans-serif", 25))
-        .build_cartesian_2d(0.0..duration + 0.5, 0.0..cpu_count as f64 - 1.0)
-        .unwrap();
-
-    ctx.configure_mesh().x_desc("Duration: seconds").y_desc("Cpu core count").disable_mesh().draw().unwrap();
-
+fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, pid_color: HashMap<u32, Rgb>, plot: &mut Plot) {
     for (core, switch_events) in data {
-        let mut ranges: Vec<(f64, f64, RGBColor)> = Vec::new();
-        let orig = actions.first().unwrap().timestamp;
         for item in switch_events.windows(2) {
             if let Events::SchedSwitch { old_base, ..} = &item[1].event {
-                let pid = old_base.pid;
                 
-                // let mut min: f64 = 0.0;
-                // if item[1].timestamp - item[0].timestamp < 0.001 {
-                //     println!("{}", item[1].timestamp - item[0].timestamp);
-                //     min += 0.1;
-                // }
-                // println!("{min}");
-                ranges.push((item[0].timestamp - orig, item[1].timestamp - orig, pid_color[&pid]));
-                
-                // ctx.draw_series(LineSeries::new(
-                //     vec![(item[0].timestamp - orig, core), (item[1].timestamp - orig, core)],
-                //      pid_color[&pid])).unwrap();
-                
+                let trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![core, core])
+                    .mode(Mode::LinesMarkers)
+                    .line(Line::new().color(pid_color[&old_base.pid]).width(1.0))
+                    .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen))
+                    .hover_text(old_base.pid.to_string())
+                    .name(old_base.command.to_string())
+                    .show_legend(false);
+
+                plot.add_trace(trace);
             }
         }
-        
-        ctx.draw_series(ranges.iter().map(|y| {
-            let mut bar = Rectangle::new([
-                (y.0, core as f64 - 0.25), 
-                (y.1, core as f64 + 0.25),
-            ], y.2.filled());
-            bar.set_margin(0, 0, 0, 0);
-            bar
-        }))
-        .unwrap();
+    }
+}
+
+fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot) {
+    let orig = actions.first().unwrap().timestamp;
+    let mut xs: Vec<f64> = Vec::new();
+    let mut ys: Vec<u32> = Vec::new();
+    let mut timestamps: Vec<String> = Vec::new();
+    
+    for action in actions {
+        if let Events::SchedWakeup { .. } = &action.event {
+            xs.push(action.timestamp - orig);
+            ys.push(action.cpu);
+            timestamps.push(action.timestamp.to_string());
+        }
     }
 
+    let trace = Scatter::new(
+        xs, ys)
+        .mode(Mode::Markers)
+        .marker(Marker::new().color(NamedColor::RoyalBlue).symbol(MarkerSymbol::LineNSOpen))
+        .name("wakeup")
+        .hover_text_array(timestamps);
+    plot.add_trace(trace);
+}
+
+fn draw_wakeup_no_ipi(actions: &Vec<Action>, plot: &mut Plot) {
+    let orig = actions.first().unwrap().timestamp;
+    let mut xs: Vec<f64> = Vec::new();
+    let mut ys: Vec<u32> = Vec::new();
+    let mut timestamps: Vec<String> = Vec::new();
+    
+    for action in actions {
+        if let Events::SchedWakeIdleNoIpi { .. } = &action.event {
+            xs.push(action.timestamp - orig);
+            ys.push(action.cpu);
+            timestamps.push(action.timestamp.to_string());
+        }
+    }
+
+    let trace = Scatter::new(
+        xs, ys)
+        .mode(Mode::Markers)
+        .marker(Marker::new().color(NamedColor::LimeGreen).symbol(MarkerSymbol::LineNSOpen))
+        .name("wake idle without ipi")
+        .hover_text_array(timestamps);
+    plot.add_trace(trace);
+}
+
+fn draw_waking(actions: &Vec<Action>, plot: &mut Plot) {
+    let orig = actions.first().unwrap().timestamp;
+    let mut xs: Vec<f64> = Vec::new();
+    let mut ys: Vec<u32> = Vec::new();
+    let mut timestamps: Vec<String> = Vec::new();
+    
+    for action in actions {
+        if let Events::SchedWaking { .. } = &action.event {
+            xs.push(action.timestamp - orig);
+            ys.push(action.cpu);
+            timestamps.push(action.timestamp.to_string());
+        }
+    }
+
+    let trace = Scatter::new(
+        xs, ys)
+        .mode(Mode::Markers)
+        .marker(Marker::new().color(NamedColor::DarkOliveGreen).symbol(MarkerSymbol::LineNSOpen))
+        .name("waking")
+        .hover_text_array(timestamps);
+    plot.add_trace(trace);
+}
+
+
+
+pub fn data_graph(show: bool) {
+    let (cpu_count, actions) = parse_file();
+    let start = actions.first().unwrap().timestamp;
+    let end = actions.last().unwrap().timestamp;
+    let duration = end - start;
+
+    let pid_color = color_by_pid(&actions);
+
+    let data = get_sched_switch_events(&actions);
+
+
+    let mut layout = Layout::new()
+                                .title(Title::new("Data Graph"))
+                                .x_axis(Axis::new().range(vec![0.0, duration]).show_grid(false))
+                                .y_axis(Axis::new().range(vec![0, cpu_count - 1]))
+                                .width(1366)
+                                .height(800);
+
+    let mut plot = Plot::new();
+
+    draw_sched_switch(start, data, pid_color, &mut plot);
+    draw_wakeup(&actions, &mut plot);
+    draw_wakeup_no_ipi(&actions, &mut plot);
+    draw_waking(&actions, &mut plot);
+
+    plot.set_layout(layout);
+    if show {
+        plot.show();
+    }
+    // plot.use_local_plotly();
+    plot.write_html("./output/DataGraph.html");
+    // plot.write_image("test.png", ImageFormat::PDF, 1920, 1080, 1.0)
 }
