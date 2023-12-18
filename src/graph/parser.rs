@@ -2,7 +2,6 @@ use core::panic;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct Base {
@@ -22,6 +21,7 @@ pub struct NumaArgs {
 
 #[derive(Debug)]
 pub enum Events {
+    // unblock - exec
     SchedWaking {
         base: Base,
         target_cpu: u32,
@@ -30,6 +30,10 @@ pub enum Events {
         cpu: u32,
     },
     SchedWakeup {
+        base: Base,
+        cpu: u32,
+    },
+    SchedWakeupNew {
         base: Base,
         cpu: u32,
     },
@@ -43,6 +47,8 @@ pub enum Events {
         state: String,
         new_base: Base,
     },
+
+    // process lifetime
     SchedProcessFree {
         base: Base,
     },
@@ -60,6 +66,8 @@ pub enum Events {
     SchedProcessExit {
         base: Base
     },
+
+    // numa balancing
     SchedSwapNuma {
         src: NumaArgs,
         dest: NumaArgs
@@ -72,6 +80,7 @@ pub enum Events {
         src: NumaArgs,
         dest: NumaArgs,
     },
+    // other
     NotSupported
 }
 
@@ -82,6 +91,16 @@ pub struct Action {
     pub cpu: u32,
     pub timestamp: f64,
     pub event: Events,
+}
+
+#[derive(Debug)]
+pub struct CPUInfo {
+    pub cpu_count: u32,
+    pub sockets: u32,
+    pub cores_per_socket: u32,
+    pub threads_per_core: u32,
+    pub numa_nodes: u32,
+    pub numa_node_ranges: Vec<Vec<(u32, u32)>>
 }
 
 
@@ -131,6 +150,27 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
             let base = Base { command, pid, priority };
             Events::SchedWakeup { base, cpu }
+        }
+        "sched_wakeup_new" => {
+            let mut index = index + 4;
+            let mut command: Vec<&str> = part[index].split(":").collect();
+            let pid: u32;
+            let temp = String::from(command.pop().unwrap()).parse::<u32>();
+            if temp.is_err() {
+                index += 1;
+                command = part[index].split(":").collect();
+                pid = String::from(command.pop().unwrap()).parse::<u32>().unwrap();
+                command.insert(0, part[index - 1]);
+                command.join(" ");
+            } 
+            else {
+                pid = temp.unwrap();
+            }
+            let command = String::from(command.remove(0)).parse().unwrap();
+            let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
+            let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
+            let base = Base { command, pid, priority };
+            Events::SchedWakeupNew { base, cpu }
         }
         "sched_migrate_task" => {
             let index = index + 4;
@@ -260,6 +300,22 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
             Events::SchedStickNuma { src, dest }
         },
+        "sched_move_numa" => {
+            let index = index + 4;
+            let pid: u32 = String::from(part[index]).replace("pid=", "").parse().unwrap();
+            let tgid: u32 = String::from(part[index + 1]).replace("tgid=", "").parse().unwrap();
+            let ngid: u32 = String::from(part[index + 2]).replace("ngid=", "").parse().unwrap();
+            let cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
+            let nid: i32 = String::from(part[index + 4]).replace("src_nid=", "").parse().unwrap();
+
+            let src = NumaArgs { pid, tgid, ngid, cpu, nid };
+
+            let cpu: i32 = String::from(part[index + 5]).replace("dst_cpu=", "").parse().unwrap();
+            let nid: i32 = String::from(part[index + 6]).replace("dst_nid=", "").parse().unwrap();
+
+            let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
+            Events::SchedMoveNuma { src, dest }
+        }
         _ => Events::NotSupported
     }
 }
@@ -289,12 +345,13 @@ fn get_action(part: &Vec<&str>) -> Action {
     event_type.pop();
 
     let event = get_event(part, &event_type, index);
-
-    // actions.insert(process.clone(), Action {process, cpu, timestamp, event });
+    if let Events::NotSupported = event {
+        println!("{}", event_type);
+    }
     Action {process, pid, cpu, timestamp, event}
 }
 
-pub fn parse_file() -> (u32, Vec<Action>) {
+pub fn parse_file() -> (CPUInfo, Vec<Action>) {
     if let Ok(mut lines) = read_lines("./input/main_report.dat") {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
@@ -308,15 +365,17 @@ pub fn parse_file() -> (u32, Vec<Action>) {
                 // line_no += 1;
             }
         }
-        // dbg!(&actions);
-        // for action in &actions {
-        //     if let Events::SchedSwitch { old_base, state, new_base } = &action.event {
-        //         if old_base.pid == 0 {
-        //             dbg!(&old_base);
-        //         }
-        //     }
-        // }
-        (cpu_count, actions)
+        
+        let cpu_info = CPUInfo {
+            cpu_count: cpu_count,
+            sockets: 2,
+            cores_per_socket: 16,
+            threads_per_core: 2,
+            numa_nodes: 2,
+            numa_node_ranges: vec![vec![(0, 16), (32, 48) ], vec![(16, 32), (48, 64)]]
+        };
+
+        (cpu_info, actions)
     }
     else {
         panic!("Failed to read trace");
