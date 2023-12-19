@@ -358,9 +358,6 @@ fn get_action(part: &Vec<&str>) -> Action {
     event_type.pop();
 
     let event = get_event(part, &event_type, index);
-    if let Events::NotSupported = event {
-        println!("{}", event_type);
-    }
     Action {process, pid, cpu, timestamp, event}
 }
 
