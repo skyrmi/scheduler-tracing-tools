@@ -346,8 +346,8 @@ fn draw_events(actions: &Vec<Action>, plot: &mut Plot) {
     draw_numa_move(&actions, plot);
 }
 
-pub fn data_graph(show: bool) {
-    let (cpu_count, actions) = parse_file();
+pub fn data_graph(filepath: &str, show: bool) {
+    let (cpu_count, actions) = parse_file(filepath);
     let start = actions.first().unwrap().timestamp;
     let end = actions.last().unwrap().timestamp;
     let duration = end - start;

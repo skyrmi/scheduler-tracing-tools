@@ -2,6 +2,7 @@ use core::panic;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+use std::env;
 
 #[derive(Debug)]
 pub struct Base {
@@ -363,8 +364,8 @@ fn get_action(part: &Vec<&str>) -> Action {
     Action {process, pid, cpu, timestamp, event}
 }
 
-pub fn parse_file() -> (u32, Vec<Action>) {
-    if let Ok(mut lines) = read_lines("./input/main_report.dat") {
+pub fn parse_file(filepath: &str) -> (u32, Vec<Action>) {
+    if let Ok(mut lines) = read_lines(filepath) {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
 

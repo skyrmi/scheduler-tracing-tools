@@ -1,7 +1,10 @@
 pub mod graph;
 
 use graph::*;
+use std::env;
 
 fn main() {
-    data_graph(true);
+    let args: Vec<_> = env::args().collect();
+    data_graph(&args[1], true);
+    
 }
