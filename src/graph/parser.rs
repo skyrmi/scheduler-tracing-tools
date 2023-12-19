@@ -63,6 +63,9 @@ pub enum Events {
         child_command: String,
         child_pid: u32,
     },
+    SchedProcessWait {
+        base: Base
+    },
     SchedProcessExit {
         base: Base
     },
@@ -253,6 +256,15 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let child_pid: u32 = String::from(part[index + 3]).replace("child_pid=", "").parse().unwrap();
             Events::SchedProcessFork { command, pid, child_command, child_pid }
         },
+        "sched_process_wait" => {
+            let index = index + 4;
+            let command = String::from(part[index]).replace("comm=", "");
+            let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
+            let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
+
+            let base = Base { command, pid, priority };
+            Events::SchedProcessWait { base }
+        },
         "sched_process_exit" => {
             let index = index + 4;
             let command = String::from(part[index]).replace("comm=", "");
@@ -351,31 +363,19 @@ fn get_action(part: &Vec<&str>) -> Action {
     Action {process, pid, cpu, timestamp, event}
 }
 
-pub fn parse_file() -> (CPUInfo, Vec<Action>) {
+pub fn parse_file() -> (u32, Vec<Action>) {
     if let Ok(mut lines) = read_lines("./input/main_report.dat") {
         let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
         let mut actions: Vec<Action> = Vec::new();
 
-        // let mut line_no = 2;
         for line in lines {
             if let Ok(ip) = line {
                 let part: Vec<&str> = ip.split_whitespace().collect();
                 actions.push(get_action(&part));
-                // println!("{} {:?} \n", line_no, actions.last());
-                // line_no += 1;
             }
         }
-        
-        let cpu_info = CPUInfo {
-            cpu_count: cpu_count,
-            sockets: 2,
-            cores_per_socket: 16,
-            threads_per_core: 2,
-            numa_nodes: 2,
-            numa_node_ranges: vec![vec![(0, 16), (32, 48) ], vec![(16, 32), (48, 64)]]
-        };
 
-        (cpu_info, actions)
+        (cpu_count, actions)
     }
     else {
         panic!("Failed to read trace");
