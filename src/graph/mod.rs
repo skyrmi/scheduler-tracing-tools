@@ -296,7 +296,7 @@ fn draw_numa_swap(actions: &Vec<Action>, plot: &mut Plot) {
                 .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
     .legend_group("numa balancing")
     .hover_info(HoverInfo::Skip)
-    .name("numa balancing"));
+    .name("numa event"));
 }
 
 fn draw_numa_move(actions: &Vec<Action>, plot: &mut Plot) {
@@ -367,11 +367,11 @@ pub fn data_graph(filepath: &str, show: bool) {
                                     Axis::new()
                                     .title(Title::new("Cores"))
                                     .range(vec![0, cpu_count - 1]))
-                                .width(1366)
-                                .height(800);
+                                .auto_size(true);
 
     let mut plot = Plot::new();
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
+    plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
 
     draw_sched_switch(start, data, pid_color, &mut plot);
     draw_events(&actions, &mut plot);
