@@ -2,7 +2,6 @@ use core::panic;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
-use std::env;
 
 #[derive(Debug)]
 pub struct Base {
@@ -117,7 +116,7 @@ where P: AsRef<Path>, {
 fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
     match event_type {
         "sched_waking" => {
-            let mut index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
 
             if part[index + 1].starts_with("pid=") == false {
@@ -131,11 +130,11 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedWaking { base, target_cpu }
         }
         "sched_wake_idle_without_ipi" => {
-            let cpu = String::from(part[index + 4]).replace("cpu=", "").parse().unwrap();
+            let cpu = String::from(part[index]).replace("cpu=", "").parse().unwrap();
             Events::SchedWakeIdleNoIpi { cpu }
         }
         "sched_wakeup" => {
-            let mut index = index + 4;
+            let mut index = index;
             let mut command: Vec<&str> = part[index].split(":").collect();
             let pid: u32;
             let temp = String::from(command.pop().unwrap()).parse::<u32>();
@@ -156,7 +155,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedWakeup { base, cpu }
         }
         "sched_wakeup_new" => {
-            let mut index = index + 4;
+            let mut index = index;
             let mut command: Vec<&str> = part[index].split(":").collect();
             let pid: u32;
             let temp = String::from(command.pop().unwrap()).parse::<u32>();
@@ -177,8 +176,12 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedWakeupNew { base, cpu }
         }
         "sched_migrate_task" => {
-            let index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
+
+            if part[index + 1].starts_with("pid=") == false {
+                index += 1;
+            }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
             let orig_cpu: u32 = String::from(part[index + 3]).replace("orig_cpu=", "").parse().unwrap();
@@ -189,7 +192,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
         }
         "sched_switch" => {
             let orig_index = index;
-            let mut index = index + 4;
+            let mut index = index;
             let mut old_command: Vec<&str> = part[index].split(":").collect();
             let old_pid: u32;
             let temp = String::from(old_command.pop().unwrap()).parse::<u32>();
@@ -210,7 +213,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let state = String::from(part[index + 2]);
 
 
-            let mut index = orig_index + 8;
+            let mut index = orig_index + 4;
             let mut new_command: Vec<&str> = part[index].split(":").collect();
             let new_pid: u32;
             let temp = String::from(new_command.pop().unwrap()).parse::<u32>();
@@ -223,7 +226,6 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             else {
                 new_pid = temp.unwrap();
             }
-            // println!("{:?}", new_command);
             let new_command = new_command.join(" ");
             // let new_command = String::from(new_command.remove(0)).parse().unwrap();
             let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
@@ -234,8 +236,12 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedSwitch { old_base, state, new_base }
         },
         "sched_process_free" => {
-            let index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
+
+            if part[index + 1].starts_with("pid=") == false {
+                index += 1;
+            }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
 
@@ -243,40 +249,51 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedProcessFree { base }
         },
         "sched_process_exec" => {
-            let index = index + 4;
+            let index = index;
             let filename = String::from(part[index]).replace("filename=", "");
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let old_pid: u32 = String::from(part[index + 2]).replace("old_pid=", "").parse().unwrap();
             Events::SchedProcessExec { filename, pid, old_pid }
         },
         "sched_process_fork" => {
-            let index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
+
+            if part[index + 1].starts_with("pid=") == false {
+                index += 1;
+            }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let child_command = String::from(part[index + 2]).replace("child_comm=", "");
+
+            if part[index + 3].starts_with("child_pid=") == false {
+                index += 1;
+            }
             let child_pid: u32 = String::from(part[index + 3]).replace("child_pid=", "").parse().unwrap();
             Events::SchedProcessFork { command, pid, child_command, child_pid }
         },
         "sched_process_wait" => {
-            let index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
+            if part[index + 1].starts_with("pid=") == false {
+                index += 1;
+            }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
-
             let base = Base { command, pid, priority };
             Events::SchedProcessWait { base }
         },
         "sched_process_exit" => {
-            let index = index + 4;
+            let mut index = index;
             let command = String::from(part[index]).replace("comm=", "");
+            if part[index + 1].starts_with("pid=") == false {
+                index += 1;
+            }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
-
             let base = Base { command, pid, priority };
             Events::SchedProcessExit { base }
         },
         "sched_swap_numa" => {
-            let index = index + 4;
             let pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
             let tgid: u32 = String::from(part[index + 1]).replace("src_tgid=", "").parse().unwrap();
             let ngid: u32 = String::from(part[index + 2]).replace("src_ngid=", "").parse().unwrap();
@@ -295,7 +312,6 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedSwapNuma { src, dest }
         }
         "sched_stick_numa" => {
-            let index = index + 4;
             let pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
             let tgid: u32 = String::from(part[index + 1]).replace("src_tgid=", "").parse().unwrap();
             let ngid: u32 = String::from(part[index + 2]).replace("src_ngid=", "").parse().unwrap();
@@ -314,7 +330,6 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             Events::SchedStickNuma { src, dest }
         },
         "sched_move_numa" => {
-            let index = index + 4;
             let pid: u32 = String::from(part[index]).replace("pid=", "").parse().unwrap();
             let tgid: u32 = String::from(part[index + 1]).replace("tgid=", "").parse().unwrap();
             let ngid: u32 = String::from(part[index + 2]).replace("ngid=", "").parse().unwrap();
@@ -354,10 +369,11 @@ fn get_action(part: &Vec<&str>) -> Action {
     let mut timestamp = String::from(part[index + 2]);
     timestamp.pop();
     let timestamp: f64 = timestamp.parse().unwrap();
+    
     let mut event_type = String::from(part[index + 3]);
     event_type.pop();
-
-    let event = get_event(part, &event_type, index);
+    
+    let event = get_event(part, &event_type, index + 4);
     Action {process, pid, cpu, timestamp, event}
 }
 
