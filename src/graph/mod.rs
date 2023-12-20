@@ -362,11 +362,13 @@ pub fn data_graph(filepath: &str, show: bool) {
                                 .x_axis(
                                     Axis::new()
                                     .title(Title::new("Duration (seconds)"))
-                                    .range(vec![0.0, duration]).show_grid(false))
+                                    .range(vec![0.0, duration])
+                                    .show_grid(false))
                                 .y_axis(
                                     Axis::new()
                                     .title(Title::new("Cores"))
-                                    .range(vec![0, cpu_count - 1]))
+                                    .range(vec![0, cpu_count - 1])
+                                    .show_grid(false))
                                 .auto_size(true);
 
     let mut plot = Plot::new();
