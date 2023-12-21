@@ -380,9 +380,9 @@ pub fn data_graph(filepath: &str, show: bool) {
 
     plot.set_layout(layout);
     if show {
-        plot.show();
+        // plot.show();
     }
     // plot.use_local_plotly();
     plot.write_html("./output/DataGraph.html");
-    plot.write_image("./output/graph.pdf", ImageFormat::PDF, 1920, 1080, 1.0);
+    plot.write_image("./output/graph.png", ImageFormat::PNG, 1920, 1080, 1.0);
 }
