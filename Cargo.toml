@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 plotly = { version = "0.8.4", features = ["kaleido"] }
 rand = "0.8.5"
+serde = "1.0.193"
+toml = "0.8.8"

@@ -2,34 +2,59 @@ pub mod parser;
 use rand::Rng;
 use std::collections::HashMap;
 use crate::parser::*;
+use crate::read_config::Config;
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
-use plotly::layout::{ Axis, Layout };
+use plotly::layout::{ Axis, Layout};
 use plotly::{Scatter, Plot, ImageFormat, Configuration};
 use plotly::color::{Rgb, NamedColor};
 
+enum ColorTable {
+    Command(HashMap<String, Rgb>),
+    // Parent(HashMap<String, Rgb>),
+    Pid(HashMap<u32, Rgb>),
+}
 
 fn random_color() -> Rgb {
     Rgb::new(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255))
 }
 
-
-fn color_by_pid(actions: &Vec<Action>) -> HashMap<u32, Rgb> {
-    let mut pid_color: HashMap<u32, Rgb> = HashMap::new();
+fn color_by_pid(actions: &Vec<Action>) -> ColorTable {
+    let mut colors: HashMap<u32, Rgb> = HashMap::new();
     for action in actions {
         if let Events::SchedSwitch { old_base, state: _, new_base } = &action.event {
-            if let None = pid_color.get(&old_base.pid) {
-                pid_color.insert(old_base.pid, random_color());
+            if old_base.pid != 0 {
+                if let None = colors.get(&old_base.pid) {
+                    colors.insert(old_base.pid, random_color());
+                }
             }
-            if let None = pid_color.get(&new_base.pid) {
-                pid_color.insert(new_base.pid, random_color());
-
+            if new_base.pid != 0 {
+                if let None = colors.get(&new_base.pid) {
+                    colors.insert(new_base.pid, random_color());
+                }
             }
         }
     }
-    pid_color.insert(0, Rgb::new(255, 255, 255));
-    pid_color
+    ColorTable::Pid(colors)
 }
 
+fn color_by_command(actions: &Vec<Action>) -> ColorTable {
+    let mut colors: HashMap<String, Rgb> = HashMap::new();
+    for action in actions {
+        if let Events::SchedSwitch { old_base, state: _, new_base } = &action.event {
+            if old_base.pid != 0 {
+                if let None = colors.get(&old_base.command) {
+                    colors.insert(old_base.command.clone(), random_color());
+                }
+            }
+            if new_base.pid != 0 {
+                if let None = colors.get(&new_base.command) {
+                    colors.insert(new_base.command.clone(), random_color());
+                }
+            }
+        }
+    }
+    ColorTable::Command(colors)
+}
 
 fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> {
     let mut data: HashMap<u32, Vec<&Action>> = HashMap::new();
@@ -42,7 +67,7 @@ fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> 
     data
 }
 
-fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, pid_color: HashMap<u32, Rgb>, plot: &mut Plot) {
+fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: ColorTable, plot: &mut Plot) {
     for (core, switch_events) in data {
         for item in switch_events.windows(2) {
             if let Events::SchedSwitch { old_base, state, new_base} = &item[1].event {
@@ -52,25 +77,28 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, pid_color: Has
                 let hover_text = format!("Timestamp: {}<br>From: {}<br>Pid: {}<br>State: {}<br>To: {}<br>Pid: {}",
                                             action.timestamp, old_base.command, old_base.pid, state, new_base.command, new_base.pid);
 
-                let trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![core, core])
+                let mut trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![core, core])
                     .mode(Mode::LinesMarkers)
-                    .line(Line::new().color(pid_color[&old_base.pid]).width(1.0))
                     .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen))
                     .hover_text(hover_text)   
                     .name("switch")
                     .legend_group("switch")
                     .show_legend(false);
 
+                match &color_table {
+                    ColorTable::Pid(colors) => {
+                        trace = trace.line(Line::new().color(colors[&old_base.pid]).width(1.0));
+                    }
+                    ColorTable::Command(colors) => {
+                        trace = trace.line(Line::new().color(colors[&old_base.command]).width(1.0));
+                    }
+                    // _ => {}
+                }
+
                 plot.add_trace(trace);
             }
         }
     }
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::Markers)
-    .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
-    .legend_group("switch")
-    .hover_info(HoverInfo::Skip)
-    .name("switch"));
 }   
 
 fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot) {
@@ -104,7 +132,7 @@ fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot) {
     let mut labels: Vec<String> = Vec::new();
     
     for action in actions {
-        if let Events::SchedWakeupNew { base, cpu } = &action.event {
+        if let Events::SchedWakeupNew { base, parent_cpu: _ , cpu } = &action.event {
             xs.push(action.timestamp - orig);
             ys.push(action.cpu);
             labels.push(format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}Target cpu: {}",
@@ -168,49 +196,63 @@ fn draw_waking(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_migrate(actions: &Vec<Action>, plot: &mut Plot) {
-    let orig = actions.first().unwrap().timestamp;
-    
-    for action in actions {
-        if let Events::SchedMigrateTask { base, orig_cpu, dest_cpu } = &action.event {
+fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_group: &str, color: NamedColor) {
+    if let Events::SchedMigrateTask { base, orig_cpu, dest_cpu, state: _ } = &action.event {
 
-            let trace = Scatter::new(
-                vec![action.timestamp - orig; 2], vec![*orig_cpu, *dest_cpu])
-                .mode(Mode::Lines)
-                .line(Line::new().color(NamedColor::Cyan).width(1.0))
-                .hover_info(HoverInfo::None)
-                .legend_group("migrate task")
-                .show_legend(false);
-            plot.add_trace(trace);
+        let trace = Scatter::new(
+            vec![action.timestamp - start_time; 2], vec![*orig_cpu, *dest_cpu])
+            .mode(Mode::Lines)
+            .line(Line::new().color(color).width(1.0))
+            .hover_info(HoverInfo::None)
+            .legend_group(legend_group)
+            .show_legend(false);
+        plot.add_trace(trace);
 
-            let hover_text = format!("Timestamp: {}<br>Command: {}<br>Pid: {}<br>Src: {}<br>Dest: {}",
-                                        action.timestamp, base.command, base.pid, orig_cpu, dest_cpu);
+        let hover_text = format!("Timestamp: {}<br>Command: {}<br>Pid: {}<br>Src: {}<br>Dest: {}",
+                                    action.timestamp, base.command, base.pid, orig_cpu, dest_cpu);
 
-            let mut trace = Scatter::new(
-                vec![action.timestamp - orig], vec![*dest_cpu])
-                .mode(Mode::Markers)
-                .name("migrate task")
-                .legend_group("migrate task")
-                .hover_text(hover_text)
-                .show_legend(false);
-            if orig_cpu < dest_cpu {
-                trace = trace.marker(Marker::new().color(NamedColor::Cyan).symbol(MarkerSymbol::TriangleUp)
-                            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            } else {
-                trace = trace.marker(Marker::new().color(NamedColor::Cyan).symbol(MarkerSymbol::TriangleDown)
-                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
+        let mut trace = Scatter::new(
+            vec![action.timestamp - start_time], vec![*dest_cpu])
+            .mode(Mode::Markers)
+            .name(legend_group)
+            .legend_group(legend_group)
+            .hover_text(hover_text)
+            .show_legend(false);
+        if orig_cpu < dest_cpu {
+            trace = trace.marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleUp)
+                        .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
+        } else {
+            trace = trace.marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleDown)
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
+        }
+        plot.add_trace(trace);
+    }
+}
+
+fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, plot: &mut Plot) {
+    if let Events::SchedMigrateTask { base, ..} = &action.event {
+        let legend_group: &str;
+        let color: NamedColor;
+        if states.contains_key(&base.pid) {
+            match states[&base.pid] {
+                Wstate::Waking(..) => { 
+                    legend_group = "unblock placement";
+                    color = NamedColor::DeepPink;
+                },
+                Wstate::Woken => {
+                    legend_group = "load balancing";
+                    color = NamedColor::Goldenrod;
+                }
+                Wstate::Numa(..) => {
+                    legend_group = "numa balancing";
+                    color = NamedColor:: SeaGreen;
+                }
             }
-            plot.add_trace(trace);
+            draw_migrate_marks(start_time, action, plot, legend_group, color);
+        } else {
+            dbg!(action);
         }
     }
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::Cyan).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("migrate task")
-    .hover_info(HoverInfo::Skip)
-    .name("migrate task"));
-    
 }
 
 fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot) {
@@ -237,102 +279,37 @@ fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_numa_swap(actions: &Vec<Action>, plot: &mut Plot) {
-    let orig = actions.first().unwrap().timestamp;
+fn draw_legends(plot: &mut Plot) {
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+    .mode(Mode::Markers)
+    .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
+    .legend_group("switch")
+    .hover_info(HoverInfo::Skip)
+    .name("switch"));
 
-    for action in actions {
-        if let Events::SchedSwapNuma { src, dest } = &action.event {
-            let trace = Scatter::new(
-                vec![action.timestamp - orig; 2], vec![src.cpu, dest.cpu])
-                .mode(Mode::Lines)
-                .line(Line::new().color(NamedColor::Goldenrod).width(1.0))
-                .hover_info(HoverInfo::None)
-                .legend_group("numa balancing")
-                .show_legend(false);
-            plot.add_trace(trace);
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+    .mode(Mode::LinesMarkers)
+    .marker(Marker::new().color(NamedColor::DeepPink).symbol(MarkerSymbol::TriangleRight)
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+    .legend_group("unblock placement")
+    .hover_info(HoverInfo::Skip)
+    .name("unblock placement"));
 
-            let hover_text = format!("Timestamp: {}<br>Command: {}<br>Src pid: {}<br>Src nid: {}<br>Dest pid: {}<br>Dest nid: {}<br>Dest cpu: {}",
-                                        action.timestamp, action.process, src.pid, src.nid, dest.pid, dest.nid, dest.cpu);
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+    .mode(Mode::LinesMarkers)
+    .marker(Marker::new().color(NamedColor::SeaGreen).symbol(MarkerSymbol::TriangleRight)
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+    .legend_group("numa balancing")
+    .hover_info(HoverInfo::Skip)
+    .name("numa balancing"));
 
-            let mut trace = Scatter::new(
-                vec![action.timestamp - orig], vec![src.cpu])
-                .mode(Mode::Markers)
-                .name("numa swap")
-                .legend_group("numa balancing")
-                .hover_text(hover_text)
-                .show_legend(false);
-            if src.cpu > dest.cpu {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleUp)
-                            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            } else {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleDown)
-                            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            }
-            plot.add_trace(trace);
-
-            let hover_text = format!("Timestamp: {}<br>Command: {}<br>Src pid: {}<br>Src nid: {}<br>Src cpu: {}<br>Dest pid: {}<br>Dest nid: {}",
-                                        action.timestamp, action.process, src.pid, src.nid, src.cpu, dest.pid, dest.nid);
-
-            let mut trace = Scatter::new(
-                vec![action.timestamp - orig], vec![dest.cpu])
-                .mode(Mode::Markers)
-                .name("numa swap")
-                .legend_group("numa balancing")
-                .hover_text(hover_text)
-                .show_legend(false);
-            if src.cpu < dest.cpu {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleUp)
-                                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            } else {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleDown)
-                                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            }
-            plot.add_trace(trace);
-        }
-    }
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
     .marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleRight)
-                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("numa balancing")
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+    .legend_group("load balancing")
     .hover_info(HoverInfo::Skip)
-    .name("numa event"));
-}
-
-fn draw_numa_move(actions: &Vec<Action>, plot: &mut Plot) {
-    let orig = actions.first().unwrap().timestamp;
-
-    for action in actions {
-        if let Events::SchedMoveNuma { src, dest } = &action.event {
-            let trace = Scatter::new(
-                vec![action.timestamp - orig; 2], vec![src.cpu, dest.cpu])
-                .mode(Mode::Lines)
-                .line(Line::new().color(NamedColor::Goldenrod).width(1.0))
-                .hover_info(HoverInfo::None)
-                .legend_group("numa balancing")
-                .show_legend(false);
-            plot.add_trace(trace);
-
-            let hover_text = format!("Timestamp: {}<br>Command: {}<br>Src pid: {}<br>Src nid: {}<br>Dest nid: {}<br>Dest cpu: {}",
-                                        action.timestamp, action.process, src.pid, src.nid, dest.nid, dest.cpu);
-
-            let mut trace = Scatter::new(
-                vec![action.timestamp - orig], vec![src.cpu])
-                .mode(Mode::Markers)
-                .name("numa move")
-                .legend_group("numa balancing")
-                .hover_text(hover_text)
-                .show_legend(false);
-            if src.cpu > dest.cpu {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleUp)
-                                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            } else {
-                trace = trace.marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleDown)
-                                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
-            }
-            plot.add_trace(trace);
-        }
-    }
+    .name("load balancing"));
 }
 
 fn draw_events(actions: &Vec<Action>, plot: &mut Plot) {
@@ -341,24 +318,36 @@ fn draw_events(actions: &Vec<Action>, plot: &mut Plot) {
     draw_wakeup_no_ipi(&actions, plot);
     draw_waking(&actions, plot);
     draw_process_fork(&actions, plot);
-    draw_migrate(&actions, plot);
-    draw_numa_swap(&actions, plot);
-    draw_numa_move(&actions, plot);
+    draw_legends(plot);
 }
 
-pub fn data_graph(filepath: &str, show: bool) {
-    let (cpu_count, actions) = parse_file(filepath);
+pub fn data_graph(filepath: &str, config: &Config) {
+    let graph_options = &config.graph;
+    let filename = filepath.split("/").last().unwrap();
+
+    let mut plot = Plot::new();
+
+    let mut reader = TraceParser::new(filepath);
+    let mut actions: Vec<Action> = Vec::new();
+    while let Some((action, ..)) = reader.next_action() {
+        actions.push(action);
+    }
+    let cpu_count = reader.cpu_count;
+
     let start = actions.first().unwrap().timestamp;
     let end = actions.last().unwrap().timestamp;
     let duration = end - start;
 
-    let pid_color = color_by_pid(&actions);
+    let color_table = match graph_options.color_by.as_str() {
+        "pid" => color_by_pid(&actions),
+        "command" => color_by_command(&actions),
+        _ => { panic!("Invalid color option"); }
+    };
 
     let data = get_sched_switch_events(&actions);
 
-
     let layout = Layout::new()
-                                .title(Title::new("Data Graph"))
+                                .title(Title::new(format!("Data Graph: {}", filename).as_str()))
                                 .x_axis(
                                     Axis::new()
                                     .title(Title::new("Duration (seconds)"))
@@ -371,18 +360,36 @@ pub fn data_graph(filepath: &str, show: bool) {
                                     .show_grid(false))
                                 .auto_size(true);
 
-    let mut plot = Plot::new();
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
 
-    draw_sched_switch(start, data, pid_color, &mut plot);
+    draw_sched_switch(start, data, color_table, &mut plot);
     draw_events(&actions, &mut plot);
 
-    plot.set_layout(layout);
-    if show {
-        // plot.show();
+    let mut reader = TraceParser::new(filepath);
+    while let Some((action, states)) = reader.next_action() {
+        if let Events::SchedMigrateTask { .. } = action.event {
+            let orig = actions.first().unwrap().timestamp;
+            draw_migrate_events(orig, &action, states, &mut plot);
+        }
     }
-    // plot.use_local_plotly();
-    plot.write_html("./output/DataGraph.html");
-    plot.write_image("./output/graph.png", ImageFormat::PNG, 1920, 1080, 1.0);
+
+    plot.set_layout(layout);
+    if graph_options.launch_default_browser {
+        plot.show();
+    }
+
+    plot.write_html(format!("./output/{}.html", filename));
+    if graph_options.gen_static {
+        let image_format = match graph_options.filetype.as_str() {
+            "png" => ImageFormat::PNG,
+            "svg" => ImageFormat::SVG,
+            "jpeg" => ImageFormat::JPEG,
+            "webp" => ImageFormat::WEBP,
+            "pdf" => ImageFormat::PDF,
+            "eps" => ImageFormat::EPS,
+            _ => { panic!("Invalid static file format"); }
+        };
+        plot.write_image(format!("./output/{}.{}", filename, graph_options.filetype), image_format, graph_options.static_res_width, graph_options.static_res_height, 1.0);
+    }
 }

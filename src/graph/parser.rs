@@ -1,4 +1,5 @@
 use core::panic;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
@@ -20,6 +21,20 @@ pub struct NumaArgs {
 }
 
 #[derive(Debug)]
+pub enum State {
+    Terminate, 
+    Block(String),
+    Yield
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Wstate {
+    Waking(u32, u32),
+    Woken,
+    Numa(i32, i32)
+}
+
+#[derive(Debug)]
 pub enum Events {
     // unblock - exec
     SchedWaking {
@@ -31,16 +46,19 @@ pub enum Events {
     },
     SchedWakeup {
         base: Base,
+        prev_cpu: Option<u32>,
         cpu: u32,
     },
     SchedWakeupNew {
         base: Base,
+        parent_cpu: u32,
         cpu: u32,
     },
     SchedMigrateTask {
         base: Base,
-        orig_cpu: u32,
-        dest_cpu: u32,
+        orig_cpu: i32,
+        dest_cpu: i32,
+        state: Wstate,
     },
     SchedSwitch {
         old_base: Base,
@@ -106,14 +124,56 @@ pub struct CPUInfo {
     pub numa_node_ranges: Vec<Vec<(u32, u32)>>
 }
 
-
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
 }
 
-fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
+pub struct TraceParser {
+    pub cpu_count: u32,
+    lines: io::Lines<io::BufReader<File>>,
+    process_state: HashMap<u32, Wstate>,
+}
+
+impl TraceParser {
+    pub fn new(filepath: &str) -> Self {
+        let file = File::open(filepath).expect("Failed to open file");
+        let reader = io::BufReader::new(file);
+        let mut lines = reader.lines();
+
+        let cpu_count = if let Some(Ok(line)) = lines.next() {
+            let part: Vec<&str> = line.split_whitespace().collect();
+            if part.len() > 0 && part[0].contains("cpus=") {
+                part[0].replace("cpus=", "").parse().unwrap()
+            } else {
+                panic!("Invalid format: Expected 'cpus=' in the first line");
+            }
+        } else {
+            panic!("Unable to read trace");
+        };
+
+        TraceParser {
+            cpu_count,
+            lines,
+            process_state: HashMap::new(),
+        }
+    }
+
+    pub fn next_action(&mut self) -> Option<(Action, &HashMap<u32, Wstate>)> {
+        while let Some(Ok(line)) = self.lines.next() {
+            let part: Vec<&str> = line.split_whitespace().collect();
+            if part.len() > 2 {
+                let action = get_action(&part, &mut self.process_state);
+                return Some((action, &self.process_state));
+            }
+        }
+        None
+    }
+
+}
+
+fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_state: &mut HashMap<u32, Wstate>, event_type: &str, index: usize) -> Events {
     match event_type {
         "sched_waking" => {
             let mut index = index;
@@ -127,6 +187,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let target_cpu: u32 = String::from(part[index + 3]).replace("target_cpu=", "").parse().unwrap();
 
             let base = Base { command, pid, priority };
+            process_state.insert(pid, Wstate::Waking(process_cpu, target_cpu));
             Events::SchedWaking { base, target_cpu }
         }
         "sched_wake_idle_without_ipi" => {
@@ -152,7 +213,15 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
             let base = Base { command, pid, priority };
-            Events::SchedWakeup { base, cpu }
+
+            let mut prev_cpu: Option<u32> = None;
+            if process_state.contains_key(&pid) {
+                if let Wstate::Waking(old_cpu, _) = process_state[&pid] {
+                    prev_cpu = Some(old_cpu);
+                }
+            }
+            process_state.insert(pid, Wstate::Woken);
+            Events::SchedWakeup { base, prev_cpu, cpu }
         }
         "sched_wakeup_new" => {
             let mut index = index;
@@ -173,7 +242,18 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
             let base = Base { command, pid, priority };
-            Events::SchedWakeupNew { base, cpu }
+
+            let mut parent_cpu = cpu;
+            if process_state.contains_key(&pid) {
+                if let Wstate::Waking(_, parent) = process_state[&pid] {
+                    parent_cpu = parent;
+                } 
+                else {
+                    panic!("Wakeup without fork");
+                }
+            }
+            process_state.insert(pid, Wstate::Woken);
+            Events::SchedWakeupNew { base, parent_cpu, cpu }
         }
         "sched_migrate_task" => {
             let mut index = index;
@@ -184,11 +264,23 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
-            let orig_cpu: u32 = String::from(part[index + 3]).replace("orig_cpu=", "").parse().unwrap();
-            let dest_cpu: u32 = String::from(part[index + 4]).replace("dest_cpu=", "").parse().unwrap();
+            let orig_cpu: i32 = String::from(part[index + 3]).replace("orig_cpu=", "").parse().unwrap();
+            let dest_cpu: i32 = String::from(part[index + 4]).replace("dest_cpu=", "").parse().unwrap();
 
             let base = Base { command, pid, priority };
-            Events::SchedMigrateTask { base, orig_cpu, dest_cpu }
+
+            let mut temp = Wstate::Woken;
+            if process_state.contains_key(&pid) {
+                temp = process_state[&pid];
+            }
+            let mut state = temp;
+            if let Wstate::Numa(c1, c2) = temp {
+                process_state.insert(pid, Wstate::Woken);
+                if orig_cpu != c1 || dest_cpu != c2 {
+                    state = Wstate::Woken;
+                }
+            }
+            Events::SchedMigrateTask { base, orig_cpu, dest_cpu, state}
         }
         "sched_switch" => {
             let orig_index = index;
@@ -210,7 +302,7 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             // let old_command = String::from(old_command.remove(0)).parse().unwrap();
             let old_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             
-            let state = String::from(part[index + 2]);
+            let state = part[index + 2];
 
 
             let mut index = orig_index + 4;
@@ -233,7 +325,23 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let old_base = Base { command: old_command, pid: old_pid, priority: old_priority };
             let new_base = Base { command: new_command, pid: new_pid, priority: new_priority };
 
-            Events::SchedSwitch { old_base, state, new_base }
+            let temp_state = match state {
+                "Z" | "X" => State::Terminate,
+                "D" | "S" | "W" | "T" => State::Block(String::from(state)),
+                _ => State::Yield,
+            };
+            if let State::Yield = temp_state {
+                if process_state.contains_key(&old_pid) {
+                    match process_state[&old_pid] {
+                        Wstate::Numa( .. ) => { },
+                        _ => { 
+                            // process_state.remove(&old_pid); 
+                        }
+                    }
+                }
+            }
+            // process_state.remove(&new_pid);
+            Events::SchedSwitch { old_base, state: String::from(state), new_base }
         },
         "sched_process_free" => {
             let mut index = index;
@@ -269,6 +377,8 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
                 index += 1;
             }
             let child_pid: u32 = String::from(part[index + 3]).replace("child_pid=", "").parse().unwrap();
+
+            process_state.insert(child_pid, Wstate::Waking(process_cpu, process_cpu));
             Events::SchedProcessFork { command, pid, child_command, child_pid }
         },
         "sched_process_wait" => {
@@ -309,6 +419,9 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let nid: i32 = String::from(part[index + 9]).replace("dst_nid=", "").parse().unwrap();
 
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
+
+            process_state.insert(src.pid, Wstate::Numa(src.cpu, dest.cpu));
+            process_state.insert(dest.pid, Wstate::Numa(dest.cpu, src.cpu));
             Events::SchedSwapNuma { src, dest }
         }
         "sched_stick_numa" => {
@@ -342,13 +455,16 @@ fn get_event(part: &Vec<&str>, event_type: &str, index: usize) -> Events {
             let nid: i32 = String::from(part[index + 6]).replace("dst_nid=", "").parse().unwrap();
 
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
+
+            
+            process_state.insert(src.pid, Wstate::Numa(src.cpu,dest.cpu));
             Events::SchedMoveNuma { src, dest }
         }
         _ => Events::NotSupported
     }
 }
 
-fn get_action(part: &Vec<&str>) -> Action {
+pub fn get_action(part: &Vec<&str>, process_state: &mut HashMap<u32, Wstate>) -> Action {
     let mut index = 0;
     let mut process: Vec<&str> = part[index].split("-").collect();
     let pid: u32;
@@ -357,7 +473,6 @@ fn get_action(part: &Vec<&str>) -> Action {
         index += 1;
         process = part[index].split("-").collect();
         pid = String::from(process.pop().unwrap()).parse::<u32>().unwrap();
-        // let old_command = old_command.join(":");
         process.insert(0, part[index - 1]);
     } 
     else {
@@ -366,6 +481,7 @@ fn get_action(part: &Vec<&str>) -> Action {
     let process = process.join("-");
 
     let cpu: u32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
+
     let mut timestamp = String::from(part[index + 2]);
     timestamp.pop();
     let timestamp: f64 = timestamp.parse().unwrap();
@@ -373,25 +489,6 @@ fn get_action(part: &Vec<&str>) -> Action {
     let mut event_type = String::from(part[index + 3]);
     event_type.pop();
     
-    let event = get_event(part, &event_type, index + 4);
+    let event = get_event(part, pid, cpu, process_state, &event_type, index + 4);
     Action {process, pid, cpu, timestamp, event}
-}
-
-pub fn parse_file(filepath: &str) -> (u32, Vec<Action>) {
-    if let Ok(mut lines) = read_lines(filepath) {
-        let cpu_count: u32 = lines.next().unwrap().expect("Unable to read cpu count").replace("cpus=", "").parse().unwrap();
-        let mut actions: Vec<Action> = Vec::new();
-
-        for line in lines {
-            if let Ok(ip) = line {
-                let part: Vec<&str> = ip.split_whitespace().collect();
-                actions.push(get_action(&part));
-            }
-        }
-
-        (cpu_count, actions)
-    }
-    else {
-        panic!("Failed to read trace");
-    }
 }
