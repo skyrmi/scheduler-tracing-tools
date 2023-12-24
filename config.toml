@@ -17,8 +17,8 @@
                             ]
 
 [graph]
-        # color options: pid, command
-        color_by = "pid"
+        # color options: pid, command, parent
+        color_by = "parent"
 
         interactive = true
         gen_static = false

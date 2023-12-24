@@ -1,6 +1,6 @@
 pub mod parser;
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::parser::*;
 use crate::read_config::{Config, Machine};
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
@@ -10,44 +10,12 @@ use plotly::color::{Rgb, NamedColor};
 
 enum ColorTable {
     Command(HashMap<String, Rgb>),
-    // Parent(HashMap<String, Rgb>),
+    Parent(HashMap<u32, Rgb>),
     Pid(HashMap<u32, Rgb>),
 }
 
 fn random_color() -> Rgb {
     Rgb::new(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255))
-}
-
-fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
-    for (socket_id, socket_ranges) in machine.numa_node_ranges.iter().enumerate() {
-        for (range_id, range) in socket_ranges.iter().enumerate() {
-            if cpu >= range[0] && cpu <= range[1] {
-                return (socket_id as u32, range_id as u32);
-            }
-        }
-    }
-    panic!("Bad numa node ranges in config");
-}
-
-fn get_y_axis(machine: &Machine) -> HashMap<u32, u32> {
-    let mut y_axis = HashMap::new();
-
-    if !machine.socket_order {
-        for cpu in 0..machine.cpus {
-            y_axis.insert(cpu, cpu);
-        }
-        return y_axis;
-    }
-
-    for cpu in 0..machine.cpus {
-        let (socket, range) = get_socket_order(cpu, machine);
-        let cores_per_socket = machine.cores_per_socket;
-        let cpu_within_socket = cpu % cores_per_socket;
-        let socket_offset = socket * cores_per_socket * machine.threads_per_core;
-        let y_axis_cpu_position = socket_offset + cpu_within_socket + range * cores_per_socket;
-        y_axis.insert(cpu, y_axis_cpu_position);
-    }
-    y_axis
 }
 
 fn color_by_pid(actions: &Vec<Action>) -> ColorTable {
@@ -88,6 +56,60 @@ fn color_by_command(actions: &Vec<Action>) -> ColorTable {
     ColorTable::Command(colors)
 }
 
+fn color_by_parent(actions: &Vec<Action>) -> ColorTable {
+    let mut parent_child_map: HashMap<u32, HashSet<u32>> = HashMap::new();
+    for action in actions {
+        if let Events::SchedProcessFork { pid, child_pid, .. } = &action.event {
+            let children = parent_child_map.entry(*pid).or_insert_with(HashSet::new);
+            children.insert(*child_pid);
+        }
+    }
+
+    let mut colors: HashMap<u32, Rgb> = HashMap::new();
+    for (_, children) in parent_child_map.iter() {
+        let color = random_color();
+        for child in children {
+            if let None = colors.get(child) {
+                colors.insert(*child, color);
+            }
+        }
+    }
+
+    ColorTable::Parent(colors)
+}
+
+fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
+    for (socket_id, socket_ranges) in machine.numa_node_ranges.iter().enumerate() {
+        for (range_id, range) in socket_ranges.iter().enumerate() {
+            if cpu >= range[0] && cpu <= range[1] {
+                return (socket_id as u32, range_id as u32);
+            }
+        }
+    }
+    panic!("Bad numa node ranges in config");
+}
+
+fn get_y_axis(machine: &Machine) -> HashMap<u32, u32> {
+    let mut y_axis = HashMap::new();
+
+    if !machine.socket_order {
+        for cpu in 0..machine.cpus {
+            y_axis.insert(cpu, cpu);
+        }
+        return y_axis;
+    }
+
+    for cpu in 0..machine.cpus {
+        let (socket, range) = get_socket_order(cpu, machine);
+        let cores_per_socket = machine.cores_per_socket;
+        let cpu_within_socket = cpu % cores_per_socket;
+        let socket_offset = socket * cores_per_socket * machine.threads_per_core;
+        let y_axis_cpu_position = socket_offset + cpu_within_socket + range * cores_per_socket;
+        y_axis.insert(cpu, y_axis_cpu_position);
+    }
+    y_axis
+}
+
 fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> {
     let mut data: HashMap<u32, Vec<&Action>> = HashMap::new();
     for action in actions {
@@ -124,7 +146,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
                     ColorTable::Command(colors) => {
                         trace = trace.line(Line::new().color(colors[&old_base.command]).width(1.0));
                     }
-                    // _ => {}
+                    _ => {}
                 }
 
                 plot.add_trace(trace);
@@ -340,7 +362,7 @@ fn draw_legends(plot: &mut Plot) {
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
     .legend_group("on-socket unblock placement")
     .hover_info(HoverInfo::Skip)
-    .name("on-socket unblock placement"));
+    .name("on-socket<br>unblock placement"));
 
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
@@ -348,7 +370,7 @@ fn draw_legends(plot: &mut Plot) {
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
     .legend_group("off-socket unblock placement")
     .hover_info(HoverInfo::Skip)
-    .name("off-socket unblock placement"));
+    .name("off-socket<br>unblock placement"));
 
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
@@ -364,7 +386,7 @@ fn draw_legends(plot: &mut Plot) {
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
     .legend_group("on-socket load balancing")
     .hover_info(HoverInfo::Skip)
-    .name("on-socket load balancing"));
+    .name("on-socket<br>load balancing"));
 
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
@@ -372,7 +394,7 @@ fn draw_legends(plot: &mut Plot) {
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
     .legend_group("off-socket load balancing")
     .hover_info(HoverInfo::Skip)
-    .name("off-socket load balancing"));
+    .name("off-socket<br>load balancing"));
 }
 
 fn draw_events(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
@@ -404,6 +426,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
     let color_table = match graph_options.color_by.as_str() {
         "pid" => color_by_pid(&actions),
         "command" => color_by_command(&actions),
+        "parent" => color_by_parent(&actions),
         _ => { panic!("Invalid color option"); }
     };
 
