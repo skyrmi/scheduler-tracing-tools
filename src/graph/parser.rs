@@ -56,8 +56,8 @@ pub enum Events {
     },
     SchedMigrateTask {
         base: Base,
-        orig_cpu: i32,
-        dest_cpu: i32,
+        orig_cpu: u32,
+        dest_cpu: u32,
         state: Wstate,
     },
     SchedSwitch {
@@ -112,16 +112,6 @@ pub struct Action {
     pub cpu: u32,
     pub timestamp: f64,
     pub event: Events,
-}
-
-#[derive(Debug)]
-pub struct CPUInfo {
-    pub cpu_count: u32,
-    pub sockets: u32,
-    pub cores_per_socket: u32,
-    pub threads_per_core: u32,
-    pub numa_nodes: u32,
-    pub numa_node_ranges: Vec<Vec<(u32, u32)>>
 }
 
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -264,8 +254,8 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
             }
             let pid: u32 = String::from(part[index + 1]).replace("pid=", "").parse().unwrap();
             let priority: i32 = String::from(part[index + 2]).replace("prio=", "").parse().unwrap();
-            let orig_cpu: i32 = String::from(part[index + 3]).replace("orig_cpu=", "").parse().unwrap();
-            let dest_cpu: i32 = String::from(part[index + 4]).replace("dest_cpu=", "").parse().unwrap();
+            let orig_cpu: u32 = String::from(part[index + 3]).replace("orig_cpu=", "").parse().unwrap();
+            let dest_cpu: u32 = String::from(part[index + 4]).replace("dest_cpu=", "").parse().unwrap();
 
             let base = Base { command, pid, priority };
 
@@ -276,7 +266,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
             let mut state = temp;
             if let Wstate::Numa(c1, c2) = temp {
                 process_state.insert(pid, Wstate::Woken);
-                if orig_cpu != c1 || dest_cpu != c2 {
+                if orig_cpu != c1 as u32 || dest_cpu != c2 as u32{
                     state = Wstate::Woken;
                 }
             }

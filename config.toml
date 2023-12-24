@@ -1,9 +1,20 @@
 [machine]
         cpus = 64
+        socket_order = true
         sockets = 2
         cores_per_socket = 16
         threads_per_core = 2
         numa_nodes = 2
+        numa_node_ranges = [ 
+                                [ 
+                                    [0, 15], 
+                                    [32, 47] 
+                                ], 
+                                [ 
+                                    [16, 31],
+                                    [48, 63]
+                                ] 
+                            ]
 
 [graph]
         # color options: pid, command

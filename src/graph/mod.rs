@@ -2,7 +2,7 @@ pub mod parser;
 use rand::Rng;
 use std::collections::HashMap;
 use crate::parser::*;
-use crate::read_config::Config;
+use crate::read_config::{Config, Machine};
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
 use plotly::layout::{ Axis, Layout};
 use plotly::{Scatter, Plot, ImageFormat, Configuration};
@@ -16,6 +16,38 @@ enum ColorTable {
 
 fn random_color() -> Rgb {
     Rgb::new(rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255), rand::thread_rng().gen_range(0..=255))
+}
+
+fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
+    for (socket_id, socket_ranges) in machine.numa_node_ranges.iter().enumerate() {
+        for (range_id, range) in socket_ranges.iter().enumerate() {
+            if cpu >= range[0] && cpu <= range[1] {
+                return (socket_id as u32, range_id as u32);
+            }
+        }
+    }
+    panic!("Bad numa node ranges in config");
+}
+
+fn get_y_axis(machine: &Machine) -> HashMap<u32, u32> {
+    let mut y_axis = HashMap::new();
+
+    if !machine.socket_order {
+        for cpu in 0..machine.cpus {
+            y_axis.insert(cpu, cpu);
+        }
+        return y_axis;
+    }
+
+    for cpu in 0..machine.cpus {
+        let (socket, range) = get_socket_order(cpu, machine);
+        let cores_per_socket = machine.cores_per_socket;
+        let cpu_within_socket = cpu % cores_per_socket;
+        let socket_offset = socket * cores_per_socket * machine.threads_per_core;
+        let y_axis_cpu_position = socket_offset + cpu_within_socket + range * cores_per_socket;
+        y_axis.insert(cpu, y_axis_cpu_position);
+    }
+    y_axis
 }
 
 fn color_by_pid(actions: &Vec<Action>) -> ColorTable {
@@ -67,7 +99,7 @@ fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> 
     data
 }
 
-fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: ColorTable, plot: &mut Plot) {
+fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: ColorTable, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     for (core, switch_events) in data {
         for item in switch_events.windows(2) {
             if let Events::SchedSwitch { old_base, state, new_base} = &item[1].event {
@@ -77,7 +109,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
                 let hover_text = format!("Timestamp: {}<br>From: {}<br>Pid: {}<br>State: {}<br>To: {}<br>Pid: {}",
                                             action.timestamp, old_base.command, old_base.pid, state, new_base.command, new_base.pid);
 
-                let mut trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![core, core])
+                let mut trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![y_axis[&core], y_axis[&core]])
                     .mode(Mode::LinesMarkers)
                     .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen))
                     .hover_text(hover_text)   
@@ -101,7 +133,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
     }
 }   
 
-fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot) {
+fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     let orig = actions.first().unwrap().timestamp;
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<u32> = Vec::new();
@@ -110,7 +142,7 @@ fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot) {
     for action in actions {
         if let Events::SchedWakeup { base, .. } = &action.event {
             xs.push(action.timestamp - orig);
-            ys.push(action.cpu);
+            ys.push(y_axis[&action.cpu]);
             labels.push(format!("Timestamp: {}<br>Waker: {}<br>Waker pid: {}<br>Wakee: {}<br>Wakee pid: {}",
                             action.timestamp, action.process, action.pid, base.command, base.pid));
         }
@@ -125,7 +157,7 @@ fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot) {
+fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     let orig = actions.first().unwrap().timestamp;
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<u32> = Vec::new();
@@ -134,7 +166,7 @@ fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot) {
     for action in actions {
         if let Events::SchedWakeupNew { base, parent_cpu: _ , cpu } = &action.event {
             xs.push(action.timestamp - orig);
-            ys.push(action.cpu);
+            ys.push(y_axis[&action.cpu]);
             labels.push(format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}Target cpu: {}",
                             action.timestamp, action.process, action.pid, base.pid, cpu));
         }
@@ -149,7 +181,7 @@ fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_wakeup_no_ipi(actions: &Vec<Action>, plot: &mut Plot) {
+fn draw_wakeup_no_ipi(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     let orig = actions.first().unwrap().timestamp;
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<u32> = Vec::new();
@@ -158,7 +190,7 @@ fn draw_wakeup_no_ipi(actions: &Vec<Action>, plot: &mut Plot) {
     for action in actions {
         if let Events::SchedWakeIdleNoIpi { .. } = &action.event {
             xs.push(action.timestamp - orig);
-            ys.push(action.cpu);
+            ys.push(y_axis[&action.cpu]);
             labels.push(format!("Timestamp: {}<br>Command: {}<br>Pid: {}", action.timestamp, action.process, action.pid));
         }
     }
@@ -172,7 +204,7 @@ fn draw_wakeup_no_ipi(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_waking(actions: &Vec<Action>, plot: &mut Plot) {
+fn draw_waking(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     let orig = actions.first().unwrap().timestamp;
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<u32> = Vec::new();
@@ -181,7 +213,7 @@ fn draw_waking(actions: &Vec<Action>, plot: &mut Plot) {
     for action in actions {
         if let Events::SchedWaking { base, target_cpu } = &action.event {
             xs.push(action.timestamp - orig);
-            ys.push(action.cpu);
+            ys.push(y_axis[&action.cpu]);
             labels.push(format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}<br>Target cpu: {}",
                                 action.timestamp, action.process, action.pid, base.pid, target_cpu));
         }
@@ -196,11 +228,11 @@ fn draw_waking(actions: &Vec<Action>, plot: &mut Plot) {
     plot.add_trace(trace);
 }
 
-fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_group: &str, color: NamedColor) {
+fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_group: &str, color: NamedColor, y_axis: &HashMap<u32, u32>) {
     if let Events::SchedMigrateTask { base, orig_cpu, dest_cpu, state: _ } = &action.event {
 
         let trace = Scatter::new(
-            vec![action.timestamp - start_time; 2], vec![*orig_cpu, *dest_cpu])
+            vec![action.timestamp - start_time; 2], vec![y_axis[orig_cpu], y_axis[dest_cpu]])
             .mode(Mode::Lines)
             .line(Line::new().color(color).width(1.0))
             .hover_info(HoverInfo::None)
@@ -212,7 +244,7 @@ fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_
                                     action.timestamp, base.command, base.pid, orig_cpu, dest_cpu);
 
         let mut trace = Scatter::new(
-            vec![action.timestamp - start_time], vec![*dest_cpu])
+            vec![action.timestamp - start_time], vec![y_axis[dest_cpu]])
             .mode(Mode::Markers)
             .name(legend_group)
             .legend_group(legend_group)
@@ -229,7 +261,7 @@ fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_
     }
 }
 
-fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, plot: &mut Plot) {
+fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     if let Events::SchedMigrateTask { base, ..} = &action.event {
         let legend_group: &str;
         let color: NamedColor;
@@ -248,14 +280,14 @@ fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, W
                     color = NamedColor:: SeaGreen;
                 }
             }
-            draw_migrate_marks(start_time, action, plot, legend_group, color);
+            draw_migrate_marks(start_time, action, plot, legend_group, color, y_axis);
         } else {
             dbg!(action);
         }
     }
 }
 
-fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot) {
+fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
     let orig = actions.first().unwrap().timestamp;
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<u32> = Vec::new();
@@ -264,7 +296,7 @@ fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot) {
     for action in actions {
         if let Events::SchedProcessFork { command, pid, child_command, child_pid } = &action.event {
             xs.push(action.timestamp - orig);
-            ys.push(action.cpu);
+            ys.push(y_axis[&action.cpu]);
             labels.push(format!("Timestamp: {}<br>Command: {}<br>Pid: {}<br>Child command: {}<br>Child pid: {}",
                             action.timestamp, command, pid, child_command, child_pid));
         }
@@ -312,12 +344,12 @@ fn draw_legends(plot: &mut Plot) {
     .name("load balancing"));
 }
 
-fn draw_events(actions: &Vec<Action>, plot: &mut Plot) {
-    draw_wakeup(&actions, plot);
-    draw_wakeup_new(&actions, plot);
-    draw_wakeup_no_ipi(&actions, plot);
-    draw_waking(&actions, plot);
-    draw_process_fork(&actions, plot);
+fn draw_events(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
+    draw_wakeup(&actions, plot, y_axis);
+    draw_wakeup_new(&actions, plot, y_axis);
+    draw_wakeup_no_ipi(&actions, plot, y_axis);
+    draw_waking(&actions, plot, y_axis);
+    draw_process_fork(&actions, plot, y_axis);
     draw_legends(plot);
 }
 
@@ -346,6 +378,8 @@ pub fn data_graph(filepath: &str, config: &Config) {
 
     let data = get_sched_switch_events(&actions);
 
+    let y_axis = get_y_axis(&config.machine);
+
     let layout = Layout::new()
                                 .title(Title::new(format!("Data Graph: {}", filename).as_str()))
                                 .x_axis(
@@ -363,14 +397,14 @@ pub fn data_graph(filepath: &str, config: &Config) {
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
 
-    draw_sched_switch(start, data, color_table, &mut plot);
-    draw_events(&actions, &mut plot);
+    draw_sched_switch(start, data, color_table, &mut plot, &y_axis);
+    draw_events(&actions, &mut plot, &y_axis);
 
     let mut reader = TraceParser::new(filepath);
     while let Some((action, states)) = reader.next_action() {
         if let Events::SchedMigrateTask { .. } = action.event {
             let orig = actions.first().unwrap().timestamp;
-            draw_migrate_events(orig, &action, states, &mut plot);
+            draw_migrate_events(orig, &action, states, &mut plot, &y_axis);
         }
     }
 
