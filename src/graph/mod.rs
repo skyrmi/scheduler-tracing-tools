@@ -261,19 +261,34 @@ fn draw_migrate_marks(start_time: f64, action: &Action, plot: &mut Plot, legend_
     }
 }
 
-fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
-    if let Events::SchedMigrateTask { base, ..} = &action.event {
+fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, plot: &mut Plot, y_axis: &HashMap<u32, u32>, machine: &Machine) {
+    if let Events::SchedMigrateTask { base, orig_cpu, dest_cpu, state: _ } = &action.event {
         let legend_group: &str;
         let color: NamedColor;
+        let (src, _) = get_socket_order(*orig_cpu, machine);
+        let (dest, _) = get_socket_order(*dest_cpu, machine);
+
         if states.contains_key(&base.pid) {
             match states[&base.pid] {
-                Wstate::Waking(..) => { 
-                    legend_group = "unblock placement";
-                    color = NamedColor::DeepPink;
+                Wstate::Waking(..) => {
+                    if src == dest {
+                        legend_group = "on-socket unblock placement";
+                        color = NamedColor::DeepPink;
+                    } 
+                    else {
+                        legend_group = "off-socket unblock placement";
+                        color = NamedColor::SkyBlue;
+                    }
                 },
                 Wstate::Woken => {
-                    legend_group = "load balancing";
-                    color = NamedColor::Goldenrod;
+                    if src == dest {
+                        legend_group = "on-socket load balancing";
+                        color = NamedColor::Gold;
+                    }
+                    else {
+                        legend_group = "off-socket load balancing";
+                        color = NamedColor::Orange;
+                    }
                 }
                 Wstate::Numa(..) => {
                     legend_group = "numa balancing";
@@ -323,9 +338,17 @@ fn draw_legends(plot: &mut Plot) {
     .mode(Mode::LinesMarkers)
     .marker(Marker::new().color(NamedColor::DeepPink).symbol(MarkerSymbol::TriangleRight)
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("unblock placement")
+    .legend_group("on-socket unblock placement")
     .hover_info(HoverInfo::Skip)
-    .name("unblock placement"));
+    .name("on-socket unblock placement"));
+
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+    .mode(Mode::LinesMarkers)
+    .marker(Marker::new().color(NamedColor::SkyBlue).symbol(MarkerSymbol::TriangleRight)
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+    .legend_group("off-socket unblock placement")
+    .hover_info(HoverInfo::Skip)
+    .name("off-socket unblock placement"));
 
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
@@ -337,11 +360,19 @@ fn draw_legends(plot: &mut Plot) {
 
     plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
     .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::Goldenrod).symbol(MarkerSymbol::TriangleRight)
+    .marker(Marker::new().color(NamedColor::Gold).symbol(MarkerSymbol::TriangleRight)
             .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("load balancing")
+    .legend_group("on-socket load balancing")
     .hover_info(HoverInfo::Skip)
-    .name("load balancing"));
+    .name("on-socket load balancing"));
+
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+    .mode(Mode::LinesMarkers)
+    .marker(Marker::new().color(NamedColor::Orange).symbol(MarkerSymbol::TriangleRight)
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+    .legend_group("off-socket load balancing")
+    .hover_info(HoverInfo::Skip)
+    .name("off-socket load balancing"));
 }
 
 fn draw_events(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>) {
@@ -404,7 +435,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
     while let Some((action, states)) = reader.next_action() {
         if let Events::SchedMigrateTask { .. } = action.event {
             let orig = actions.first().unwrap().timestamp;
-            draw_migrate_events(orig, &action, states, &mut plot, &y_axis);
+            draw_migrate_events(orig, &action, states, &mut plot, &y_axis, &config.machine);
         }
     }
 

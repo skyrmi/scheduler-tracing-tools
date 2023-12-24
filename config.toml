@@ -1,6 +1,6 @@
 [machine]
         cpus = 64
-        socket_order = true
+        socket_order = false
         sockets = 2
         cores_per_socket = 16
         threads_per_core = 2
