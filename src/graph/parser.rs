@@ -142,7 +142,7 @@ impl TraceParser {
         } else {
             panic!("Unable to read trace");
         };
-
+        println!("-------------");
         TraceParser {
             cpu_count,
             lines,
@@ -265,8 +265,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
             }
             let mut state = temp;
             if let Wstate::Numa(c1, c2) = temp {
-                process_state.insert(pid, Wstate::Woken);
-                if orig_cpu != c1 as u32 || dest_cpu != c2 as u32{
+                if orig_cpu != c1 as u32 || dest_cpu != c2 as u32 {
                     state = Wstate::Woken;
                 }
             }
@@ -309,28 +308,11 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
                 new_pid = temp.unwrap();
             }
             let new_command = new_command.join(" ");
-            // let new_command = String::from(new_command.remove(0)).parse().unwrap();
             let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
 
             let old_base = Base { command: old_command, pid: old_pid, priority: old_priority };
             let new_base = Base { command: new_command, pid: new_pid, priority: new_priority };
-
-            let temp_state = match state {
-                "Z" | "X" => State::Terminate,
-                "D" | "S" | "W" | "T" => State::Block(String::from(state)),
-                _ => State::Yield,
-            };
-            if let State::Yield = temp_state {
-                if process_state.contains_key(&old_pid) {
-                    match process_state[&old_pid] {
-                        Wstate::Numa( .. ) => { },
-                        _ => { 
-                            // process_state.remove(&old_pid); 
-                        }
-                    }
-                }
-            }
-            // process_state.remove(&new_pid);
+            
             Events::SchedSwitch { old_base, state: String::from(state), new_base }
         },
         "sched_process_free" => {
@@ -446,7 +428,6 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
 
             let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
 
-            
             process_state.insert(src.pid, Wstate::Numa(src.cpu,dest.cpu));
             Events::SchedMoveNuma { src, dest }
         }

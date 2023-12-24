@@ -4,7 +4,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct Machine {
     pub cpus: u32,
-    pub socket_order: bool,
+    pub cores_in_socket_order: bool,
     pub sockets: u32,
     pub cores_per_socket: u32,
     pub threads_per_core: u32,

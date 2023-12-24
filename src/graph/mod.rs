@@ -92,7 +92,7 @@ fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
 fn get_y_axis(machine: &Machine) -> HashMap<u32, u32> {
     let mut y_axis = HashMap::new();
 
-    if !machine.socket_order {
+    if !machine.cores_in_socket_order {
         for cpu in 0..machine.cpus {
             y_axis.insert(cpu, cpu);
         }
@@ -314,7 +314,7 @@ fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, W
                 }
                 Wstate::Numa(..) => {
                     legend_group = "numa balancing";
-                    color = NamedColor:: SeaGreen;
+                    color = NamedColor::SeaGreen;
                 }
             }
             draw_migrate_marks(start_time, action, plot, legend_group, color, y_axis);

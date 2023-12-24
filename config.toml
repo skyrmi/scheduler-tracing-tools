@@ -1,6 +1,6 @@
 [machine]
         cpus = 64
-        socket_order = false
+        cores_in_socket_order = true
         sockets = 2
         cores_per_socket = 16
         threads_per_core = 2
@@ -18,7 +18,7 @@
 
 [graph]
         # color options: pid, command, parent
-        color_by = "parent"
+        color_by = "pid"
 
         interactive = true
         gen_static = false
