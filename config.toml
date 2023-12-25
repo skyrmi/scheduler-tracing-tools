@@ -21,10 +21,16 @@
         color_by = "pid"
 
         interactive = true
+
+        # webgl improves performance for large graphs, but may cause 
+        webgl = false
         gen_static = false
         static_res_width = 1920
         static_res_height = 1080
         launch_default_browser = true
+        
+        # non-empty path should end with '/'
+        output_path = ""
 
         # static filetype options = png, jpeg, webp, svg, pdf, eps
-        filetype = "png"
+        filetype = "pdf"

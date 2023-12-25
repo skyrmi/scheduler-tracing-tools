@@ -16,10 +16,12 @@ pub struct Machine {
 pub struct Graph {
     pub color_by: String,
     pub interactive: bool,
+    pub webgl: bool,
     pub gen_static: bool,
     pub static_res_width: usize,
     pub static_res_height: usize,
     pub launch_default_browser: bool,
+    pub output_path: String,
     pub filetype: String,
 }
 
