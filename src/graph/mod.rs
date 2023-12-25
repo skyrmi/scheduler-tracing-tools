@@ -189,7 +189,7 @@ fn draw_wakeup_new(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32,
         if let Events::SchedWakeupNew { base, parent_cpu: _ , cpu } = &action.event {
             xs.push(action.timestamp - orig);
             ys.push(y_axis[&action.cpu]);
-            labels.push(format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}Target cpu: {}",
+            labels.push(format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}<br>Target cpu: {}",
                             action.timestamp, action.process, action.pid, base.pid, cpu));
         }
     }
@@ -467,6 +467,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
         plot.show();
     }
 
+    plot.use_local_plotly();
     plot.write_html(format!("./output/{}.html", filename));
     if graph_options.gen_static {
         let image_format = match graph_options.filetype.as_str() {

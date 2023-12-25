@@ -32,7 +32,5 @@ pub struct Config {
 pub fn config() -> Config {
     let config_str = read_to_string("./config.toml").expect("Failed to read config");
     let config: Config = toml::from_str(&config_str).expect("Failed to parse config");
-
-    println!("{:?}", config.machine.numa_node_ranges);
     config
 }
