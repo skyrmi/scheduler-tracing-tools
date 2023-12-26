@@ -424,8 +424,6 @@ pub fn data_graph(filepath: &str, config: &Config) {
     let graph_options = &config.graph;
     let filename = filepath.split("/").last().unwrap();
 
-    let mut plot = Plot::new();
-
     let mut reader = TraceParser::new(filepath);
     let mut actions: Vec<Action> = Vec::new();
     while let Some((action, ..)) = reader.next_action() {
@@ -462,6 +460,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
                                     .show_grid(false))
                                 .auto_size(true);
 
+    let mut plot = Plot::new();
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
 
