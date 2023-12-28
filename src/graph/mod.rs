@@ -1,11 +1,11 @@
 pub mod parser;
-use rand::Rng;
+use rand::{Rng, random};
 use std::collections::{HashMap, HashSet};
 use crate::parser::*;
 use crate::read_config::{Config, Machine};
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
 use plotly::layout::{ Axis, Layout};
-use plotly::{Scatter, Plot, ImageFormat, Configuration};
+use plotly::{Scatter, Plot, ImageFormat, Configuration, color};
 use plotly::color::{Rgb, NamedColor};
 
 enum ColorTable {
@@ -57,24 +57,20 @@ fn color_by_command(actions: &Vec<Action>) -> ColorTable {
 }
 
 fn color_by_parent(actions: &Vec<Action>) -> ColorTable {
-    let mut parent_child_map: HashMap<u32, HashSet<u32>> = HashMap::new();
+    let mut colors: HashMap<u32, Rgb> = HashMap::new();
     for action in actions {
         if let Events::SchedProcessFork { pid, child_pid, .. } = &action.event {
-            let children = parent_child_map.entry(*pid).or_insert_with(HashSet::new);
-            children.insert(*child_pid);
-        }
-    }
-
-    let mut colors: HashMap<u32, Rgb> = HashMap::new();
-    for (_, children) in parent_child_map.iter() {
-        let color = random_color();
-        for child in children {
-            if let None = colors.get(child) {
-                colors.insert(*child, color);
+            if let None = colors.get(pid) {
+                colors.insert(*pid, random_color());
+            }
+            if let None = colors.get(child_pid) {
+                colors.insert(*child_pid, colors[pid]);
             }
         }
+        else if let None = colors.get(&action.pid) {
+            colors.insert(action.pid, random_color());
+        }
     }
-
     ColorTable::Parent(colors)
 }
 
@@ -126,30 +122,34 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
         for item in switch_events.windows(2) {
             if let Events::SchedSwitch { old_base, state, new_base} = &item[1].event {
                 if old_base.pid == 0 { continue; }
-                let action = item[1];
                 
                 let hover_text = format!("Timestamp: {}<br>From: {}<br>Pid: {}<br>State: {}<br>To: {}<br>Pid: {}",
-                                            action.timestamp, old_base.command, old_base.pid, state, new_base.command, new_base.pid);
+                                            item[1].timestamp, old_base.command, old_base.pid, state, new_base.command, new_base.pid);
 
                 let mut trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![y_axis[&core], y_axis[&core]])
-                    .mode(Mode::LinesMarkers)
-                    .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen))
-                    .hover_text(hover_text)   
-                    .name("switch")
+                    .mode(Mode::Lines)
+                    .hover_info(HoverInfo::Skip)   
                     .legend_group("switch")
                     .web_gl_mode(webgl)
                     .show_legend(false);
 
-                match &color_table {
-                    ColorTable::Pid(colors) => {
-                        trace = trace.line(Line::new().color(colors[&old_base.pid]).width(1.0));
-                    }
-                    ColorTable::Command(colors) => {
-                        trace = trace.line(Line::new().color(colors[&old_base.command]).width(1.0));
-                    }
-                    _ => {}
-                }
+                let color = match &color_table {
+                    ColorTable::Pid(colors) => colors[&old_base.pid],
+                    ColorTable::Command(colors) => colors[&old_base.command],
+                    ColorTable::Parent(colors) => colors[&old_base.pid]
+                };
 
+                trace = trace.line(Line::new().color(color).width(1.0));
+                plot.add_trace(trace);
+
+                let trace = Scatter::new(vec![item[1].timestamp - orig], vec![y_axis[&core]])
+                        .mode(Mode::Markers)
+                        .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color(color))
+                        .hover_text(hover_text)
+                        .name("switch")
+                        .legend_group("switch")
+                        .web_gl_mode(webgl)
+                        .show_legend(false);
                 plot.add_trace(trace);
             }
         }
@@ -463,6 +463,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
     let mut plot = Plot::new();
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
+    plot.set_configuration(Configuration::static_plot(plot.configuration().clone(), false));
 
     draw_sched_switch(start, data, color_table, &mut plot, &y_axis, graph_options.webgl);
     draw_events(&actions, &mut plot, &y_axis, graph_options.webgl);

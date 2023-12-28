@@ -18,19 +18,21 @@
 
 [graph]
         # color options: pid, command, parent
-        color_by = "pid"
+        color_by = "parent"
 
         interactive = true
 
-        # webgl improves performance for large graphs, but may cause 
+        # webgl improves performance especially for large graphs, but may cause pixelation
         webgl = false
+
         gen_static = false
         static_res_width = 1920
         static_res_height = 1080
+
         launch_default_browser = true
         
         # non-empty path should end with '/'
         output_path = ""
 
         # static filetype options = png, jpeg, webp, svg, pdf, eps
-        filetype = "pdf"
+        filetype = "png"

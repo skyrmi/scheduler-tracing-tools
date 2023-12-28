@@ -278,7 +278,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
             let old_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let state = part[index + 2];
 
-            let (new_command, new_pid, index) = extract_command_and_pid(part, ':', index);
+            let (new_command, new_pid, index) = extract_command_and_pid(part, ':', index + 4);
             let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
 
             let old_base = Base { command: old_command, pid: old_pid, priority: old_priority };
@@ -302,7 +302,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
         },
         "sched_process_fork" => {
             let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let (child_command, child_pid, index) = parse_named_args(&part, index, "child_comm=", "child_pid=");
+            let (child_command, child_pid, index) = parse_named_args(&part, index + 1, "child_comm=", "child_pid=");
 
             process_state.insert(child_pid, Wstate::Waking(process_cpu, process_cpu));
             Events::SchedProcessFork { command, pid, child_command, child_pid }
