@@ -1,6 +1,5 @@
 [machine]
         cpus = 64
-        cores_in_socket_order = false
         sockets = 2
         cores_per_socket = 16
         threads_per_core = 2
@@ -16,19 +15,26 @@
                                 ] 
                             ]
 
+
 [graph]
         # color options: pid, command, parent
         color_by = "parent"
 
+        # if true cpus are arranged as per sockets
+        socket_order = false
+
+        # set graph's interactivity
         interactive = true
 
         # webgl improves performance especially for large graphs, but may cause pixelation
         webgl = false
 
+        # static graph generation other than html and size 
         gen_static = false
         static_res_width = 1920
         static_res_height = 1080
 
+        # whether to launch the system default browser to view the generated html file
         launch_default_browser = true
         
         # non-empty path should end with '/'
@@ -36,3 +42,15 @@
 
         # static filetype options = png, jpeg, webp, svg, pdf, eps
         filetype = "png"
+
+        # whether sched_switch events are shown, is unaffected by show_events options
+        show_switch = true
+
+        # choose which events to show, if show_events = true
+        show_events = true
+        show_all = true
+        show_wake =  false
+        show_migrate = false
+
+        # input files, can be given as an array here or via commmand line arguments
+        files = [""]

@@ -7,13 +7,11 @@ use std::fs::remove_file;
 use std::io::Write;
 use graph::*;
 use read_config::{config, Config};
-use std::env;
 
 fn main() {
     let config = config();
-    let args: Vec<_> = env::args().collect();
-    for arg in args.iter().skip(1) {
-        make_graph(arg, &config);
+    for arg in &config.graph.files {
+        make_graph(&arg, &config);
     }
 }
 

@@ -1,8 +1,9 @@
 pub mod parser;
 use rand::{Rng, random};
 use std::collections::{HashMap, HashSet};
+use std::option;
 use crate::parser::*;
-use crate::read_config::{Config, Machine};
+use crate::read_config::{Config, Machine, Graph};
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
 use plotly::layout::{ Axis, Layout};
 use plotly::{Scatter, Plot, ImageFormat, Configuration, color};
@@ -85,10 +86,10 @@ fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
     panic!("Bad numa node ranges in config");
 }
 
-fn get_y_axis(machine: &Machine) -> HashMap<u32, u32> {
+fn get_y_axis(machine: &Machine, socket_order: bool) -> HashMap<u32, u32> {
     let mut y_axis = HashMap::new();
 
-    if !machine.cores_in_socket_order {
+    if !socket_order {
         for cpu in 0..machine.cpus {
             y_axis.insert(cpu, cpu);
         }
@@ -154,6 +155,13 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
             }
         }
     }
+    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::Markers)
+        .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
+        .legend_group("switch")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("switch"));
 }   
 
 fn draw_wakeup(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>, webgl: bool) {
@@ -356,68 +364,62 @@ fn draw_process_fork(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u3
     plot.add_trace(trace);
 }
 
-fn draw_legends(plot: &mut Plot, webgl: bool) {
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::Markers)
-    .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
-    .legend_group("switch")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("switch"));
+fn draw_legends(plot: &mut Plot, webgl: bool, options: &Graph) {
+    if options.show_all || options.show_migrate {
+        plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::LinesMarkers)
+        .marker(Marker::new().color(NamedColor::DeepPink).symbol(MarkerSymbol::TriangleRight)
+                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+        .legend_group("on-socket unblock placement")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("on-socket<br>unblock placement"));
 
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::DeepPink).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("on-socket unblock placement")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("on-socket<br>unblock placement"));
+        plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::LinesMarkers)
+        .marker(Marker::new().color(NamedColor::SkyBlue).symbol(MarkerSymbol::TriangleRight)
+                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+        .legend_group("off-socket unblock placement")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("off-socket<br>unblock placement"));
 
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::SkyBlue).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("off-socket unblock placement")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("off-socket<br>unblock placement"));
+        plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::LinesMarkers)
+        .marker(Marker::new().color(NamedColor::SeaGreen).symbol(MarkerSymbol::TriangleRight)
+                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+        .legend_group("numa balancing")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("numa balancing"));
 
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::SeaGreen).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("numa balancing")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("numa balancing"));
+        plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::LinesMarkers)
+        .marker(Marker::new().color(NamedColor::Gold).symbol(MarkerSymbol::TriangleRight)
+                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+        .legend_group("on-socket load balancing")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("on-socket<br>load balancing"));
 
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::Gold).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("on-socket load balancing")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("on-socket<br>load balancing"));
-
-    plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
-    .mode(Mode::LinesMarkers)
-    .marker(Marker::new().color(NamedColor::Orange).symbol(MarkerSymbol::TriangleRight)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-    .legend_group("off-socket load balancing")
-    .hover_info(HoverInfo::Skip)
-    .web_gl_mode(webgl)
-    .name("off-socket<br>load balancing"));
+        plot.add_trace(Scatter::new(vec![0, 0], vec![-1, -1])
+        .mode(Mode::LinesMarkers)
+        .marker(Marker::new().color(NamedColor::Orange).symbol(MarkerSymbol::TriangleRight)
+                .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+        .legend_group("off-socket load balancing")
+        .hover_info(HoverInfo::Skip)
+        .web_gl_mode(webgl)
+        .name("off-socket<br>load balancing"));
+    }
 }
 
-fn draw_events(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>, webgl: bool) {
+fn draw_events(actions: &Vec<Action>, plot: &mut Plot, y_axis: &HashMap<u32, u32>, webgl: bool, options: &Graph) {
     draw_wakeup(&actions, plot, y_axis, webgl);
     draw_wakeup_new(&actions, plot, y_axis, webgl);
     draw_wakeup_no_ipi(&actions, plot, y_axis, webgl);
     draw_waking(&actions, plot, y_axis, webgl);
     draw_process_fork(&actions, plot, y_axis, webgl);
-    draw_legends(plot, webgl);
+    draw_legends(plot, webgl, options);
 }
 
 pub fn data_graph(filepath: &str, config: &Config) {
@@ -444,7 +446,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
 
     let data = get_sched_switch_events(&actions);
 
-    let y_axis = get_y_axis(&config.machine);
+    let y_axis = get_y_axis(&config.machine, graph_options.socket_order);
 
     let layout = Layout::new()
                                 .title(Title::new(format!("Data Graph: {}", filename).as_str()))
@@ -463,16 +465,26 @@ pub fn data_graph(filepath: &str, config: &Config) {
     let mut plot = Plot::new();
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
-    plot.set_configuration(Configuration::static_plot(plot.configuration().clone(), false));
 
-    draw_sched_switch(start, data, color_table, &mut plot, &y_axis, graph_options.webgl);
-    draw_events(&actions, &mut plot, &y_axis, graph_options.webgl);
+    if graph_options.gen_static {
+        plot.set_configuration(Configuration::static_plot(plot.configuration().clone(), true));
+    }
 
-    let mut reader = TraceParser::new(filepath);
-    while let Some((action, states)) = reader.next_action() {
-        if let Events::SchedMigrateTask { .. } = action.event {
-            let orig = actions.first().unwrap().timestamp;
-            draw_migrate_events(orig, &action, states, &mut plot, &y_axis, &config.machine, graph_options.webgl);
+    if graph_options.show_switch {
+        draw_sched_switch(start, data, color_table, &mut plot, &y_axis, graph_options.webgl);
+    }
+
+    if graph_options.show_events && (graph_options.show_all || graph_options.show_wake) {
+        draw_events(&actions, &mut plot, &y_axis, graph_options.webgl, graph_options);
+    }
+
+    if graph_options.show_events && (graph_options.show_all || graph_options.show_migrate) {
+        let mut reader = TraceParser::new(filepath);
+        while let Some((action, states)) = reader.next_action() {
+            if let Events::SchedMigrateTask { .. } = action.event {
+                let orig = actions.first().unwrap().timestamp;
+                draw_migrate_events(orig, &action, states, &mut plot, &y_axis, &config.machine, graph_options.webgl);
+            }
         }
     }
 
