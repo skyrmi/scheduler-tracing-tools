@@ -24,7 +24,7 @@ pub struct Machine {
 #[derive(Debug, Clone)]
 #[command(about = "Visualize trace-cmd report")]
 pub struct Graph {
-    #[arg(long, default_value = "pid", required = false, value_names = ["pid", "parent", "command"])]
+    #[arg(long, default_value = "pid", required = false)]
     pub color_by: String,
 
     #[arg(long, required = false)]
@@ -35,6 +35,12 @@ pub struct Graph {
 
     #[arg(long, required = false)]
     pub webgl: bool,
+
+    #[arg(long, required = false)]
+    pub start: f64,
+
+    #[arg(long, required = false)]
+    pub end: f64,
 
     #[arg(long, required = false)]
     pub gen_static: bool,
@@ -53,7 +59,7 @@ pub struct Graph {
     #[arg(long, default_value = "", required = false)]
     pub output_path: String,
 
-    #[arg(long, default_value = "png", required = false, value_names = ["png", "svg", "webp", "jpeg", "pdf", "eps"])]
+    #[arg(long, default_value = "png", required = false)]
     pub filetype: String,
 
     #[arg(long, required = false)]
@@ -127,6 +133,10 @@ pub fn default_config() -> String {
 
     # webgl improves performance especially for large graphs, but may cause pixelation
     webgl = false
+
+    # start and end duration in seconds, negative numbers mean unset
+    start = -1.0
+    end = -1.0
 
     # static graph generation other than html and size 
     gen_static = false
