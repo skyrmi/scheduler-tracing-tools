@@ -89,11 +89,11 @@ pub struct Config {
 }
 
 pub fn config() -> Config {
-    let mut temp_str = read_to_string("./config.toml");
+    let mut temp_str = read_to_string("./tracing-tool-config.toml");
     if temp_str.is_err() {
-        let mut writer = File::create("./config.toml").expect("Failed to generate config");
+        let mut writer = File::create("./tracing-tool-config.toml").expect("Failed to generate config");
         writer.write_all(default_config().as_bytes()).expect("Error while writing config");
-        temp_str = read_to_string("./config.toml");
+        temp_str = read_to_string("./tracing-tool-config.toml");
     }
     let config_str = temp_str.unwrap();
     let Config {machine, graph}: Config = toml::from_str(&config_str).expect("Failed to parse config");
