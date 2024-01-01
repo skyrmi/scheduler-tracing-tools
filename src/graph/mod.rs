@@ -1,12 +1,11 @@
 pub mod parser;
-use rand::{Rng, random};
-use std::collections::{HashMap, HashSet};
-use std::option;
+use rand::Rng;
+use std::collections::HashMap;
 use crate::parser::*;
 use crate::read_config::{Config, Machine, Graph};
 use plotly::common::{ Line, Marker, Mode, Title, MarkerSymbol, HoverInfo};
 use plotly::layout::{ Axis, Layout};
-use plotly::{Scatter, Plot, ImageFormat, Configuration, color};
+use plotly::{Scatter, Plot, ImageFormat, Configuration};
 use plotly::color::{Rgb, NamedColor};
 
 enum ColorTable {
@@ -86,11 +85,11 @@ fn get_socket_order(cpu: u32, machine: &Machine) -> (u32, u32) {
     panic!("Bad numa node ranges in config");
 }
 
-fn get_y_axis(machine: &Machine, socket_order: bool) -> HashMap<u32, u32> {
+fn get_y_axis(machine: &Machine, socket_order: bool, cpu_count: u32) -> HashMap<u32, u32> {
     let mut y_axis = HashMap::new();
 
     if !socket_order {
-        for cpu in 0..machine.cpus {
+        for cpu in 0..cpu_count {
             y_axis.insert(cpu, cpu);
         }
         return y_axis;
@@ -126,6 +125,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
                 
                 let hover_text = format!("Timestamp: {}<br>From: {}<br>Pid: {}<br>State: {}<br>To: {}<br>Pid: {}",
                                             item[1].timestamp, old_base.command, old_base.pid, state, new_base.command, new_base.pid);
+
 
                 let mut trace = Scatter::new(vec![item[0].timestamp - orig, item[1].timestamp - orig], vec![y_axis[&core], y_axis[&core]])
                     .mode(Mode::Lines)
@@ -333,8 +333,6 @@ fn draw_migrate_events(start_time: f64, action: &Action, states: &HashMap<u32, W
                 }
             }
             draw_migrate_marks(start_time, action, plot, legend_group, color, y_axis, webgl);
-        } else {
-            dbg!(action);
         }
     }
 }
@@ -446,7 +444,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
 
     let data = get_sched_switch_events(&actions);
 
-    let y_axis = get_y_axis(&config.machine, graph_options.socket_order);
+    let y_axis = get_y_axis(&config.machine, graph_options.socket_order, cpu_count);
 
     let layout = Layout::new()
                                 .title(Title::new(format!("Data Graph: {}", filename).as_str()))
@@ -466,7 +464,7 @@ pub fn data_graph(filepath: &str, config: &Config) {
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));
     plot.set_configuration(Configuration::fill_frame(plot.configuration().clone(), true));
 
-    if graph_options.gen_static {
+    if !graph_options.interactive {
         plot.set_configuration(Configuration::static_plot(plot.configuration().clone(), true));
     }
 
@@ -489,11 +487,11 @@ pub fn data_graph(filepath: &str, config: &Config) {
     }
 
     plot.set_layout(layout);
+    plot.use_local_plotly();
     if graph_options.launch_default_browser {
         plot.show();
     }
 
-    plot.use_local_plotly();
     plot.write_html(format!("{}{}.html", graph_options.output_path, filename));
     if graph_options.gen_static {
         let image_format = match graph_options.filetype.as_str() {
