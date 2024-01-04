@@ -37,10 +37,13 @@ pub struct Graph {
     pub webgl: bool,
 
     #[arg(long, required = false)]
-    pub start: f64,
+    pub custom_range: bool,
 
     #[arg(long, required = false)]
-    pub end: f64,
+    pub min: f64,
+
+    #[arg(long, required = false)]
+    pub max: f64,
 
     #[arg(long, required = false)]
     pub gen_static: bool,
@@ -67,9 +70,6 @@ pub struct Graph {
 
     #[arg(long, required = false)]
     pub show_events: bool,
-
-    #[arg(long, required = false)]
-    pub show_all: bool,
 
     #[arg(long, required = false)]
     pub show_wake: bool,
@@ -134,9 +134,12 @@ pub fn default_config() -> String {
     # webgl improves performance especially for large graphs, but may cause pixelation
     webgl = false
 
-    # start and end duration in seconds, negative numbers mean unset
-    start = -1.0
-    end = -1.0
+    # whether to show only a part of the graph
+    custom_range = false
+
+    # bounds for the part to show
+    min = 0.0
+    max = 0.0
 
     # static graph generation other than html and size 
     gen_static = false
@@ -157,7 +160,6 @@ pub fn default_config() -> String {
 
     # choose which events to show, if show_events = true
     show_events = true
-    show_all = true
     show_wake =  false
     show_migrate = false
 

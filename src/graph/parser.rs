@@ -4,29 +4,6 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 
-#[derive(Debug)]
-pub struct Base {
-    pub command: String,
-    pub pid: u32,
-    priority: i32, 
-}
-
-#[derive(Debug)]
-pub struct NumaArgs {
-    pub pid: u32,
-    pub tgid: u32,
-    pub ngid: u32,
-    pub cpu: i32,
-    pub nid: i32
-}
-
-#[derive(Debug)]
-pub enum State {
-    Terminate, 
-    Block(String),
-    Yield
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Wstate {
     Waking(u32, u32),
@@ -38,37 +15,44 @@ pub enum Wstate {
 pub enum Events {
     // unblock - exec
     SchedWaking {
-        base: Base,
+        command: String,
+        pid: u32,
         target_cpu: u32,
     },
     SchedWakeIdleNoIpi {
         cpu: u32,
     },
     SchedWakeup {
-        base: Base,
+        command: String, 
+        pid: u32,
         prev_cpu: Option<u32>,
         cpu: u32,
     },
     SchedWakeupNew {
-        base: Base,
+        command: String, 
+        pid: u32,
         parent_cpu: u32,
         cpu: u32,
     },
     SchedMigrateTask {
-        base: Base,
+        command: String, 
+        pid: u32,
         orig_cpu: u32,
         dest_cpu: u32,
         state: Wstate,
     },
     SchedSwitch {
-        old_base: Base,
+        old_command: String, 
+        old_pid: u32,
         state: String,
-        new_base: Base,
+        new_command: String, 
+        new_pid: u32,
     },
 
     // process lifetime
     SchedProcessFree {
-        base: Base,
+        command: String, 
+        pid: u32,
     },
     SchedProcessExec {
         filename: String,
@@ -82,24 +66,31 @@ pub enum Events {
         child_pid: u32,
     },
     SchedProcessWait {
-        base: Base
+        command: String, 
+        pid: u32,
     },
     SchedProcessExit {
-        base: Base
+        command: String, 
+        pid: u32,
     },
 
     // numa balancing
     SchedSwapNuma {
-        src: NumaArgs,
-        dest: NumaArgs
+        src_pid: u32,
+        src_cpu: i32,
+        dst_pid: u32,
+        dst_cpu: i32,
     },
     SchedStickNuma {
-        src: NumaArgs,
-        dest: NumaArgs
+        src_pid: u32,
+        src_cpu: i32,
+        dst_pid: u32,
+        dst_cpu: i32,
     },
     SchedMoveNuma {
-        src: NumaArgs,
-        dest: NumaArgs,
+        src_pid: u32,
+        src_cpu: i32,
+        dst_cpu: i32,
     },
     // other
     NotSupported
@@ -122,6 +113,8 @@ where P: AsRef<Path>, {
 
 pub struct TraceParser {
     pub cpu_count: u32,
+    pub first_timestamp: Option<f64>,
+    pub last_timestamp: Option<f64>,
     lines: io::Lines<io::BufReader<File>>,
     process_state: HashMap<u32, Wstate>,
 }
@@ -145,17 +138,23 @@ impl TraceParser {
 
         TraceParser {
             cpu_count,
+            first_timestamp: None,
+            last_timestamp: None,
             lines,
             process_state: HashMap::new(),
         }
     }
 
-    pub fn next_action(&mut self) -> Option<(Action, &HashMap<u32, Wstate>)> {
+    pub fn next_action(&mut self) -> Option<(Action, &HashMap<u32, Wstate>, Option<f64>)> {
         while let Some(Ok(line)) = self.lines.next() {
             let part: Vec<&str> = line.split_whitespace().collect();
             if part.len() > 2 {
                 let action = get_action(&part, &mut self.process_state);
-                return Some((action, &self.process_state));
+                if self.first_timestamp.is_none() {
+                    self.first_timestamp = Some(action.timestamp);
+                }
+                self.last_timestamp = Some(action.timestamp);
+                return Some((action, &self.process_state, self.first_timestamp));
             }
         }
         None
@@ -208,12 +207,10 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
     match event_type {
         "sched_waking" => {
             let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let priority: i32 = String::from(part[index + 1]).replace("prio=", "").parse().unwrap();
             let target_cpu: u32 = String::from(part[index + 2]).replace("target_cpu=", "").parse().unwrap();
 
-            let base = Base { command, pid, priority };
             process_state.insert(pid, Wstate::Waking(process_cpu, target_cpu));
-            Events::SchedWaking { base, target_cpu }
+            Events::SchedWaking { command, pid, target_cpu }
         }
         "sched_wake_idle_without_ipi" => {
             let cpu = String::from(part[index]).replace("cpu=", "").parse().unwrap();
@@ -221,9 +218,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
         }
         "sched_wakeup" => {
             let (command, pid, index) = extract_command_and_pid(part, ':', index);
-            let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
-            let base = Base { command, pid, priority };
 
             let mut prev_cpu: Option<u32> = None;
             if process_state.contains_key(&pid) {
@@ -232,13 +227,11 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
                 }
             }
             process_state.insert(pid, Wstate::Woken);
-            Events::SchedWakeup { base, prev_cpu, cpu }
+            Events::SchedWakeup { command, pid, prev_cpu, cpu }
         }
         "sched_wakeup_new" => {
             let (command, pid, index) = extract_command_and_pid(part, ':', index);
-            let priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let cpu: u32 = String::from(part[index + 2]).replace("CPU:", "").parse().unwrap();
-            let base = Base { command, pid, priority };
 
             let mut parent_cpu = cpu;
             if process_state.contains_key(&pid) {
@@ -250,15 +243,12 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
                 }
             }
             process_state.insert(pid, Wstate::Woken);
-            Events::SchedWakeupNew { base, parent_cpu, cpu }
+            Events::SchedWakeupNew { command, pid, parent_cpu, cpu }
         }
         "sched_migrate_task" => {
             let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let priority: i32 = String::from(part[index + 1]).replace("prio=", "").parse().unwrap();
             let orig_cpu: u32 = String::from(part[index + 2]).replace("orig_cpu=", "").parse().unwrap();
             let dest_cpu: u32 = String::from(part[index + 3]).replace("dest_cpu=", "").parse().unwrap();
-
-            let base = Base { command, pid, priority };
 
             let mut temp = Wstate::Woken;
             if process_state.contains_key(&pid) {
@@ -270,28 +260,19 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
                     state = Wstate::Woken;
                 }
             }
-            Events::SchedMigrateTask { base, orig_cpu, dest_cpu, state}
+            Events::SchedMigrateTask { command, pid, orig_cpu, dest_cpu, state}
         }
         "sched_switch" => {
             let (old_command, old_pid, index) = extract_command_and_pid(part, ':', index);
-            
-            let old_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
             let state = part[index + 2];
-
-            let (new_command, new_pid, index) = extract_command_and_pid(part, ':', index + 4);
-            let new_priority: i32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
-
-            let old_base = Base { command: old_command, pid: old_pid, priority: old_priority };
-            let new_base = Base { command: new_command, pid: new_pid, priority: new_priority };
+            let (new_command, new_pid, ..) = extract_command_and_pid(part, ':', index + 4);
             
-            Events::SchedSwitch { old_base, state: String::from(state), new_base }
+            Events::SchedSwitch { old_command, old_pid, state: String::from(state), new_command, new_pid }
         },
         "sched_process_free" => {
-            let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let priority: i32 = String::from(part[index + 1]).replace("prio=", "").parse().unwrap();
+            let (command, pid, ..) = parse_named_args(&part, index, "comm=", "pid=");
 
-            let base = Base { command, pid, priority };
-            Events::SchedProcessFree { base }
+            Events::SchedProcessFree { command, pid }
         },
         "sched_process_exec" => {
             let index = index;
@@ -302,78 +283,46 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
         },
         "sched_process_fork" => {
             let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let (child_command, child_pid, index) = parse_named_args(&part, index + 1, "child_comm=", "child_pid=");
+            let (child_command, child_pid, ..) = parse_named_args(&part, index + 1, "child_comm=", "child_pid=");
 
             process_state.insert(child_pid, Wstate::Waking(process_cpu, process_cpu));
             Events::SchedProcessFork { command, pid, child_command, child_pid }
         },
         "sched_process_wait" => {
-            let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let priority: i32 = String::from(part[index + 1]).replace("prio=", "").parse().unwrap();
-            let base = Base { command, pid, priority };
-            Events::SchedProcessWait { base }
+            let (command, pid, ..) = parse_named_args(&part, index, "comm=", "pid=");
+            Events::SchedProcessWait { command, pid }
         },
         "sched_process_exit" => {
-            let (command, pid, index) = parse_named_args(&part, index, "comm=", "pid=");
-            let priority: i32 = String::from(part[index + 1]).replace("prio=", "").parse().unwrap();
-            let base = Base { command, pid, priority };
-            Events::SchedProcessExit { base }
+            let (command, pid, ..) = parse_named_args(&part, index, "comm=", "pid=");
+            Events::SchedProcessExit { command, pid }
         },
         "sched_swap_numa" => {
-            let pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
-            let tgid: u32 = String::from(part[index + 1]).replace("src_tgid=", "").parse().unwrap();
-            let ngid: u32 = String::from(part[index + 2]).replace("src_ngid=", "").parse().unwrap();
-            let cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 4]).replace("src_nid=", "").parse().unwrap();
+            let src_pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
+            let src_cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
 
-            let src = NumaArgs { pid, tgid, ngid, cpu, nid };
+            let dst_pid: u32 = String::from(part[index + 5]).replace("dst_pid=", "").parse().unwrap();
+            let dst_cpu: i32 = String::from(part[index + 8]).replace("dst_cpu=", "").parse().unwrap();
 
-            let pid: u32 = String::from(part[index + 5]).replace("dst_pid=", "").parse().unwrap();
-            let tgid: u32 = String::from(part[index + 6]).replace("dst_tgid=", "").parse().unwrap();
-            let ngid: u32 = String::from(part[index + 7]).replace("dst_ngid=", "").parse().unwrap();
-            let cpu: i32 = String::from(part[index + 8]).replace("dst_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 9]).replace("dst_nid=", "").parse().unwrap();
-
-            let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
-
-            process_state.insert(src.pid, Wstate::Numa(src.cpu, dest.cpu));
-            process_state.insert(dest.pid, Wstate::Numa(dest.cpu, src.cpu));
-            Events::SchedSwapNuma { src, dest }
+            process_state.insert(src_pid, Wstate::Numa(src_cpu, dst_cpu));
+            process_state.insert(dst_pid, Wstate::Numa(dst_cpu, src_cpu));
+            Events::SchedSwapNuma { src_pid, src_cpu, dst_pid, dst_cpu }
         }
         "sched_stick_numa" => {
-            let pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
-            let tgid: u32 = String::from(part[index + 1]).replace("src_tgid=", "").parse().unwrap();
-            let ngid: u32 = String::from(part[index + 2]).replace("src_ngid=", "").parse().unwrap();
-            let cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 4]).replace("src_nid=", "").parse().unwrap();
+            let src_pid: u32 = String::from(part[index]).replace("src_pid=", "").parse().unwrap();
+            let src_cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
 
-            let src = NumaArgs { pid, tgid, ngid, cpu, nid };
+            let dst_pid: u32 = String::from(part[index + 5]).replace("dst_pid=", "").parse().unwrap();
+            let dst_cpu: i32 = String::from(part[index + 8]).replace("dst_cpu=", "").parse().unwrap();
 
-            let pid: u32 = String::from(part[index + 5]).replace("dst_pid=", "").parse().unwrap();
-            let tgid: u32 = String::from(part[index + 6]).replace("dst_tgid=", "").parse().unwrap();
-            let ngid: u32 = String::from(part[index + 7]).replace("dst_ngid=", "").parse().unwrap();
-            let cpu: i32 = String::from(part[index + 8]).replace("dst_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 9]).replace("dst_nid=", "").parse().unwrap();
-
-            let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
-            Events::SchedStickNuma { src, dest }
+            Events::SchedStickNuma { src_pid, src_cpu, dst_pid, dst_cpu }
         },
         "sched_move_numa" => {
-            let pid: u32 = String::from(part[index]).replace("pid=", "").parse().unwrap();
-            let tgid: u32 = String::from(part[index + 1]).replace("tgid=", "").parse().unwrap();
-            let ngid: u32 = String::from(part[index + 2]).replace("ngid=", "").parse().unwrap();
-            let cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 4]).replace("src_nid=", "").parse().unwrap();
+            let src_pid: u32 = String::from(part[index]).replace("pid=", "").parse().unwrap();
+            let src_cpu: i32 = String::from(part[index + 3]).replace("src_cpu=", "").parse().unwrap();
+            let dst_cpu: i32 = String::from(part[index + 5]).replace("dst_cpu=", "").parse().unwrap();
 
-            let src = NumaArgs { pid, tgid, ngid, cpu, nid };
-
-            let cpu: i32 = String::from(part[index + 5]).replace("dst_cpu=", "").parse().unwrap();
-            let nid: i32 = String::from(part[index + 6]).replace("dst_nid=", "").parse().unwrap();
-
-            let dest = NumaArgs { pid, tgid, ngid, cpu, nid };
-
-            process_state.insert(src.pid, Wstate::Numa(src.cpu,dest.cpu));
-            Events::SchedMoveNuma { src, dest }
+            process_state.insert(src_pid, Wstate::Numa(src_cpu, dst_cpu));
+            Events::SchedMoveNuma { src_pid, src_cpu, dst_cpu }
         }
         _ => Events::NotSupported
     }
