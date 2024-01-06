@@ -1,7 +1,9 @@
 # Scheduler tracing tool
 
-To run:
+Build with:
 ```
 cd scheduler-tracing-tools
-cargo run <filename>
+cargo build --release
 ```
+
+The executable will then be present in `target`
