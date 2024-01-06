@@ -19,66 +19,117 @@ pub struct Machine {
     pub numa_node_ranges: Vec<Vec<Vec<u32>>>,
 }
 
-
 #[derive(ClapSerde, Serialize, Deserialize)]
 #[derive(Debug, Clone)]
 #[command(about = "Visualize trace-cmd report")]
 pub struct Graph {
+    /// Available color options: pid, command, parent
     #[arg(long, default_value = "pid", required = false)]
     pub color_by: String,
 
+    /// Whether cpus in the same socket should be grouped together
     #[arg(long, required = false)]
     pub socket_order: bool,
+    
+    /// Start plot after first sleep command
+    #[arg(long, required = false)]
+    pub sleep: bool,
 
+    /// Whether to create a html plot
+    #[arg(long, required = false)]
+    pub create_html: bool,
+
+    /// Whether the generated html is interactive
     #[arg(long, required = false)]
     pub interactive: bool,
 
+    /// Transparent markers to display when hovering on a line
+    #[arg(long, required = false)]
+    pub line_marker_count: u32,
+
+    /// Ignore switch events smaller than limit when not interative
+    #[arg(long, required = false)]
+    pub limit: f64,
+
+    /// Webgl improves performance but may cause pixelation
     #[arg(long, required = false)]
     pub webgl: bool,
 
+    /// To select a portion of the trace to plot
     #[arg(long, required = false)]
     pub custom_range: bool,
 
+    /// the lower limit of the displayed range
     #[arg(long, required = false)]
     pub min: f64,
 
+    /// the higher limit of the displayed range
     #[arg(long, required = false)]
     pub max: f64,
 
+    /// Whether to show the generated plot
+    #[arg(long, required = false)]
+    pub show_html: bool,
+
+    /// Browser program name, will use default if empty
+    #[arg(long, required = false)]
+    pub browser: String,
+
+    /// Output location for the plots, default is current directory
+    #[arg(long, default_value = "", required = false)]
+    pub output_path: String,
+
+    /// Options for static plot other than html
+    #[clap_serde]
+    #[command(flatten)]
+    pub static_options: Static,
+
+    /// Events to show
+    #[clap_serde]
+    #[command(flatten)]
+    pub events: Events,
+
+    #[arg()]
+    pub files: Vec<String>
+}
+
+#[derive(ClapSerde, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+pub struct Static {
+    /// Whether to generate a static plot other than the html
     #[arg(long, required = false)]
     pub gen_static: bool,
 
+    /// Width of the static plot
     #[default(1920)]
     #[arg(long, required = false)]
     pub static_res_width: usize,
 
+    /// Height of the static plot
     #[default(1080)]
     #[arg(long, required = false)]
     pub static_res_height: usize,
 
-    #[arg(long, required = false)]
-    pub launch_default_browser: bool,
-
-    #[arg(long, default_value = "", required = false)]
-    pub output_path: String,
-
+    /// Filetype of the static plot, available options: png, svg, webp, pdf, jpeg, eps
     #[arg(long, default_value = "png", required = false)]
     pub filetype: String,
+}
 
-    #[arg(long, required = false)]
-    pub show_switch: bool,
-
+#[derive(ClapSerde, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[command()]
+pub struct Events {
+    /// Whether to show all events
     #[arg(long, required = false)]
     pub show_events: bool,
 
+    /// Events represented with only a notch: wake, process fork/exec etc.
     #[arg(long, required = false)]
-    pub show_wake: bool,
+    pub show_marker_only: bool,
 
+    /// Migration events: unblock placement, load balancing, numa balancing
     #[arg(long, required = false)]
     pub show_migrate: bool,
-
-    #[arg()]
-    pub files: Vec<String>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -88,6 +139,9 @@ pub struct Config {
     pub graph: Graph,
 }
 
+
+// Priority order for config options:
+// Command line arguments > config file options > defaults (if present)
 pub fn config() -> Config {
     let mut temp_str = read_to_string("./tracing-tool-config.toml");
     if temp_str.is_err() {
@@ -128,8 +182,20 @@ pub fn default_config() -> String {
     # if true cpus are arranged as per sockets
     socket_order = false
 
-    # set graph's interactivity
+    # start plot after the first sleep command
+    sleep = false
+
+    # whether to create a html plot
+    create_html = true
+
+    # set the html plot's interactivity
     interactive = true
+
+    # transparent marker count for hover info between switch events
+    line_marker_count = 0
+    
+    # Switch events smaller than limit will be ignored if not interactive
+    limit = 0.0
 
     # webgl improves performance especially for large graphs, but may cause pixelation
     webgl = false
@@ -141,29 +207,37 @@ pub fn default_config() -> String {
     min = 0.0
     max = 0.0
 
-    # static graph generation other than html and size 
+    # whether to show the generated html file after creation
+    show_html = true
+
+    # browser program name, if empty default is used
+    browser = \"\"
+    
+    # Location for the generated file(s)
+    output_path = \"\"
+
+    # input files, can be given as an array here or via commmand line arguments
+    files = [\"\"]
+
+[graph.events]
+    # choose which events to show, all are shown if show_events = true
+    show_events = true
+
+    # Events represented with only a notch: wake, process fork/exec etc.
+    show_marker_only =  false
+
+    # Migration events: unblock placement, load balancing, numa balancing
+    show_migrate = false
+
+[graph.static_options]
+    # generate static graph in a different file format
     gen_static = false
+
     static_res_width = 1920
     static_res_height = 1080
 
-    # whether to launch the system default browser to view the generated html file
-    launch_default_browser = true
-    
-    # non-empty path should end with '/'
-    output_path = \"\"
-
-    # static filetype options = png, jpeg, webp, svg, pdf, eps
+    # filetype options = png, jpeg, webp, svg, pdf, eps
     filetype = \"png\"
-
-    # whether sched_switch events are shown, is unaffected by show_events options
-    show_switch = true
-
-    # choose which events to show, if show_events = true
-    show_events = true
-    show_wake =  false
-    show_migrate = false
-
-    # input files, can be given as an array here or via commmand line arguments
-    files = [\"\"]"
+"
 )
 }

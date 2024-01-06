@@ -15,6 +15,7 @@ fn main() {
     }
 }
 
+// if file_extension = .dat, get the trace-cmd report and plot
 fn make_graph(filepath: &String, config:&Config) {
     let filepath = filepath;
     let filename = filepath.split("/").last().unwrap();

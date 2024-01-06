@@ -11,6 +11,7 @@ pub enum Wstate {
     Numa(i32, i32)
 }
 
+// The different event types in the trace
 #[derive(Debug)]
 pub enum Events {
     // unblock - exec
@@ -96,6 +97,7 @@ pub enum Events {
     NotSupported
 }
 
+// An Action represents a line of the trace
 #[derive(Debug)]
 pub struct Action {
     pub process: String,
@@ -105,6 +107,8 @@ pub struct Action {
     pub event: Events,
 }
 
+
+// function for buffered reading, to avoid loading entire file into memory
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
@@ -116,10 +120,13 @@ pub struct TraceParser {
     pub first_timestamp: Option<f64>,
     pub last_timestamp: Option<f64>,
     lines: io::Lines<io::BufReader<File>>,
+
+    // Track the waking state of processes
     process_state: HashMap<u32, Wstate>,
 }
 
 impl TraceParser {
+    // open trace file and get the cpu_count
     pub fn new(filepath: &str) -> Self {
         let file = File::open(filepath).expect("Failed to open file");
         let reader = io::BufReader::new(file);
@@ -145,6 +152,7 @@ impl TraceParser {
         }
     }
 
+    // read a line of trace and return the action, first timestamp and waking states of processes
     pub fn next_action(&mut self) -> Option<(Action, &HashMap<u32, Wstate>, Option<f64>)> {
         while let Some(Ok(line)) = self.lines.next() {
             let part: Vec<&str> = line.split_whitespace().collect();
@@ -203,6 +211,8 @@ fn parse_named_args(parts: &[&str], position: usize, comm: &str, id: &str) -> (S
     (command, pid, position)
 }
 
+
+// parse and return the event's information as a struct with the type Events
 fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_state: &mut HashMap<u32, Wstate>, event_type: &str, index: usize) -> Events {
     match event_type {
         "sched_waking" => {
@@ -328,6 +338,7 @@ fn get_event(part: &Vec<&str>, _process_pid: u32, process_cpu: u32, process_stat
     }
 }
 
+// parse and return the action
 pub fn get_action(part: &Vec<&str>, process_state: &mut HashMap<u32, Wstate>) -> Action {
     let (process, pid, index) = extract_command_and_pid(part, '-', 0);
     let cpu: u32 = String::from(part[index + 1]).replace(&['[', ']'][..], "").parse().unwrap();
