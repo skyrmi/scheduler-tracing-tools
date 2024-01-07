@@ -34,6 +34,9 @@ impl ScatterObject {
     }
 }
 
+// constructs a Hashmap for events containing only a notch
+// Adding events: insert an event and its color here
+//      followed by adding its match condition in draw_traces()
 fn marker_events_object() -> HashMap<String, ScatterObject> {
     let mut map: HashMap<String, ScatterObject> = HashMap::new();
     let events = vec![("wakeup", NamedColor::RoyalBlue),
@@ -46,7 +49,27 @@ fn marker_events_object() -> HashMap<String, ScatterObject> {
         map.insert(name.to_string(), ScatterObject::new(Mode::Markers, name, color));
     }
     map
-} 
+}
+
+fn get_frequency_map() -> HashMap<String, u32> {
+    let events = vec![
+        "wakeup",
+        "wakeup new",
+        "wake idle no ipi",
+        "waking",
+        "process fork",
+        "on-socket<br>unblock placement",
+        "off-socket<br>unblock placement",
+        "on-socket<br>load balancing",
+        "off-socket<br>load balancing",
+        "numa balancing"
+    ];
+    let mut frequency: HashMap<String, u32> = HashMap::new();
+    for event in events {
+        frequency.insert(event.to_string(), 0);
+    }
+    frequency
+}
 
 
 // Get a random color
@@ -168,25 +191,27 @@ fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> 
 }
 
 fn draw_switch_markers(plot: &mut Plot, switch_markers: ScatterObject, options: &Graph) {
-    // draw the switch event notches
-    plot.add_trace(Scatter::new(
-        switch_markers.xs, switch_markers.ys)
-        .mode(Mode::Markers)
-        .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(switch_markers.color_array))
-        .name(&switch_markers.name)
-        .hover_text_array(switch_markers.hover_text)
-        .legend_group(switch_markers.name)
-        .show_legend(false)
-        .web_gl_mode(options.webgl)
-    );
+    if options.events.show_events || options.events.show_switch {
+        // draw the switch event notches
+        plot.add_trace(Scatter::new(
+            switch_markers.xs, switch_markers.ys)
+            .mode(Mode::Markers)
+            .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(switch_markers.color_array))
+            .name(&switch_markers.name)
+            .hover_text_array(switch_markers.hover_text)
+            .legend_group(switch_markers.name)
+            .show_legend(false)
+            .web_gl_mode(options.webgl)
+        );
 
-    // draw the legend for the switch events
-    plot.add_trace(Scatter::new(vec![0], vec![-1])
-        .mode(Mode::Markers)
-        .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
-        .legend_group("switch")
-        .hover_info(HoverInfo::Skip)
-        .name("switch"));
+        // draw the legend for the switch events
+        plot.add_trace(Scatter::new(vec![0], vec![-1])
+            .mode(Mode::Markers)
+            .marker(Marker::new().symbol(MarkerSymbol::LineEWOpen))
+            .legend_group("switch")
+            .hover_info(HoverInfo::Skip)
+            .name("switch"));
+    }
 }
 
 
@@ -290,12 +315,12 @@ fn draw_migrate_marks(start_time: f64, action: &Action, traces: &mut Vec<Box<dyn
 
 
 // Determine type of migrate event and draw
-fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, traces: &mut Vec<Box<dyn Trace>>, y_axis: &HashMap<u32, u32>, machine: &Machine, webgl: bool) {
+fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, traces: &mut Vec<Box<dyn Trace>>, y_axis: &HashMap<u32, u32>, config: &Config, frequency: &mut HashMap<String, u32>) {
     if let Events::SchedMigrateTask { command: _, pid, orig_cpu, dest_cpu, state: _ } = &action.event {
         let legend_group: &str;
         let color: NamedColor;
-        let (src, _) = get_socket_order(*orig_cpu, machine);
-        let (dest, _) = get_socket_order(*dest_cpu, machine);
+        let (src, _) = get_socket_order(*orig_cpu, &config.machine);
+        let (dest, _) = get_socket_order(*dest_cpu, &config.machine);
 
         if states.contains_key(pid) {
             match states[pid] {
@@ -324,19 +349,21 @@ fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32
                     color = NamedColor::SeaGreen;
                 }
             }
-            draw_migrate_marks(start_time, action, traces, legend_group, color, y_axis, webgl);
+            draw_migrate_marks(start_time, action, traces, legend_group, color, y_axis, config.graph.webgl);
+            frequency.insert(legend_group.to_string(), frequency[legend_group] + 1);
         }
     }
 }
 
-fn draw_legends(plot: &mut Plot, options: &Graph) {
+fn draw_legends(plot: &mut Plot, frequency: HashMap<String, u32>, options: &Graph) {
     let marker_legends = vec![("wakeup", NamedColor::RoyalBlue),
                                             ("wakeup new", NamedColor::Brown),
                                             ("wake idle no ipi", NamedColor::LimeGreen),
                                             ("waking", NamedColor::DarkOliveGreen),
                                             ("process fork", NamedColor::Pink)];
 
-    let migrate_legends = vec![("on-socket<br>unblock placement", NamedColor::DeepPink),
+    let migrate_legends = vec![
+                                    ("on-socket<br>unblock placement", NamedColor::DeepPink),
                                     ("off-socket<br>unblock placement", NamedColor::SkyBlue),
                                     ("numa balancing", NamedColor::SeaGreen),
                                     ("on-socket<br>load balancing", NamedColor::Gold),
@@ -344,27 +371,33 @@ fn draw_legends(plot: &mut Plot, options: &Graph) {
 
     // marker legends: containing only a notch 
     if options.events.show_events || options.events.show_marker_only {
-        for (name, color) in marker_legends {
-            plot.add_trace(Scatter::new(vec![0], vec![-1])
-            .mode(Mode::LinesMarkers)
-            .marker(Marker::new().color(color).symbol(MarkerSymbol::LineNSOpen))
-            .line(Line::new().width(1.0))
-            .legend_group(name)
-            .hover_info(HoverInfo::Skip)
-            .name(name));
+        for (legend_group, color) in marker_legends {
+            if frequency.contains_key(legend_group) {
+                let name = format!("{} ({})", legend_group, frequency[legend_group]);
+                plot.add_trace(Scatter::new(vec![0], vec![-1])
+                .mode(Mode::LinesMarkers)
+                .marker(Marker::new().color(color).symbol(MarkerSymbol::LineNSOpen))
+                .line(Line::new().width(1.0))
+                .legend_group(legend_group)
+                .hover_info(HoverInfo::Skip)
+                .name(&name));
+            }
         }
     }
 
     // migrate events: contain both lines and notches
     if options.events.show_events || options.events.show_migrate {
-        for (name, color) in migrate_legends {
-            plot.add_trace(Scatter::new(vec![0], vec![-1])
-            .mode(Mode::LinesMarkers)
-            .marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleRight)
-                    .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
-            .legend_group(name)
-            .hover_info(HoverInfo::Skip)
-            .name(name));
+        for (legend_group, color) in migrate_legends {
+            if frequency.contains_key(legend_group) {
+                let name = format!("{} ({})", legend_group, frequency[legend_group]);
+                plot.add_trace(Scatter::new(vec![0], vec![-1])
+                .mode(Mode::LinesMarkers)
+                .marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleRight)
+                        .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)))
+                .legend_group(&legend_group)
+                .hover_info(HoverInfo::Skip)
+                .name(name));
+            }
         }
     }
 }
@@ -417,6 +450,7 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
     let mut fork_events: Vec<Action> = Vec::new();
     let mut migrate_traces: Vec<Box<dyn Trace>> = Vec::new();
     let mut marker_events = marker_events_object();
+    let mut frequency: HashMap<String, u32> = get_frequency_map();
 
     let options = &config.graph;
     let y_axis = get_y_axis(&config.machine, options.socket_order, reader.cpu_count);
@@ -450,8 +484,10 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
         }
         
         // match and store the events
+        let mut name = "";
         match &action.event {
             Events::SchedSwitch { .. } => {
+                name = "switch";
                 if options.custom_range && !boundary_events.is_empty()  {
                     for (_, v) in boundary_events.drain() {
                         switch_events.push(v);
@@ -460,41 +496,44 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
                 switch_events.push(action);
             },
             Events::SchedWakeup { command, pid, .. } => {
-                let name = "wakeup";
+                name = "wakeup";
                 let hover_text = format!("Timestamp: {}<br>Waker: {}<br>Waker pid: {}<br>Wakee: {}<br>Wakee pid: {}",
                                 action.timestamp, action.process, action.pid, command, pid);
                 add_event(&mut marker_events, &action, start_time, &y_axis, name, hover_text);
 
             },
             Events::SchedWakeupNew { command: _, pid, parent_cpu: _, cpu } => {
-                let name = "wakeup new";
+                name = "wakeup new";
                 let hover_text = format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}<br>Target cpu: {}",
                                 action.timestamp, action.process, action.pid, pid, cpu);
                 add_event(&mut marker_events, &action, start_time, &y_axis, name, hover_text);
             },
             Events::SchedWakeIdleNoIpi { .. } => {
-                let name = "wake idle no ipi";
+                name = "wake idle no ipi";
                 let hover_text = format!("Timestamp: {}<br>Command: {}<br>Pid: {}", action.timestamp, action.process, action.pid);
                 add_event(&mut marker_events, &action, start_time, &y_axis, name, hover_text);
             }
             Events::SchedWaking { command: _, pid, target_cpu } => {
-                let name = "waking";
+                name = "waking";
                 let hover_text = format!("Timestamp: {}<br>Command: {}<br>Waker pid: {}<br>Wakee pid: {}<br>Target cpu: {}",
                                 action.timestamp, action.process, action.pid, pid, target_cpu);
                 add_event(&mut marker_events, &action, start_time, &y_axis, name, hover_text);
             },
             Events::SchedProcessFork { command, pid, child_command, child_pid } => {
-                let name = "process fork";
+                name = "process fork";
                 let hover_text = format!("Timestamp: {}<br>Command: {}<br>Pid: {}<br>Child command: {}<br>Child pid: {}",
                                 action.timestamp, command, pid, child_command, child_pid);
                 add_event(&mut marker_events, &action, start_time, &y_axis, name, hover_text);
                 fork_events.push(action);
-            }
+            },
             Events::SchedMigrateTask { .. } => {
-                // migrat
-                classify_migrate_event(start_time, &action, states, &mut migrate_traces, &y_axis, &config.machine, options.webgl);
+                name = "migrate task";
+                classify_migrate_event(start_time, &action, states, &mut migrate_traces, &y_axis, config, &mut frequency);
             }
             _ => { }
+        }
+        if frequency.contains_key(name) {
+            frequency.insert(name.to_string(), frequency[name] + 1);
         }
     }
 
@@ -517,7 +556,7 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
     if options.events.show_events || options.events.show_migrate {
         plot.add_traces(migrate_traces);
     }
-    draw_legends(plot, options);
+    draw_legends(plot, frequency, options);
     reader
 }
 
@@ -544,7 +583,6 @@ pub fn data_graph(filepath: &str, config: &Config) {
     }
 
     let mut layout = Layout::new()
-                            .title(Title::new(format!("Data Graph: {}", filename).as_str()))
                             .x_axis(
                                 Axis::new()
                                 .title(Title::new(&x_axis_title))
@@ -560,6 +598,10 @@ pub fn data_graph(filepath: &str, config: &Config) {
 
     if options.line_marker_count > 0 && options.line_marker_count <= 25 {
         layout = layout.hover_distance(100);
+    }
+
+    if options.show_title {
+        layout = layout.title(Title::new(format!("Data Graph: {}", filename).as_str()));
     }
 
     plot.set_configuration(Configuration::display_logo(plot.configuration().clone(), false));

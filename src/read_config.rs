@@ -35,6 +35,10 @@ pub struct Graph {
     #[arg(long, required = false)]
     pub sleep: bool,
 
+    /// Show trace file name as title on top of graph
+    #[arg(long, required = false)]
+    pub show_title: bool,
+
     /// Whether to create a html plot
     #[arg(long, required = false)]
     pub create_html: bool,
@@ -123,6 +127,10 @@ pub struct Events {
     #[arg(long, required = false)]
     pub show_events: bool,
 
+    /// Toggle for switch event notches
+    #[arg(long, required = false)]
+    pub show_switch: bool,
+
     /// Events represented with only a notch: wake, process fork/exec etc.
     #[arg(long, required = false)]
     pub show_marker_only: bool,
@@ -185,6 +193,9 @@ pub fn default_config() -> String {
     # start plot after the first sleep command
     sleep = false
 
+    # whether to have filename as title on top of graph
+    show_title = true
+
     # whether to create a html plot
     create_html = true
 
@@ -222,6 +233,9 @@ pub fn default_config() -> String {
 [graph.events]
     # choose which events to show, all are shown if show_events = true
     show_events = true
+
+    # toggle for switch event notches
+    show_switch = false
 
     # Events represented with only a notch: wake, process fork/exec etc.
     show_marker_only =  false
