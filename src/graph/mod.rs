@@ -71,6 +71,20 @@ fn get_frequency_map() -> HashMap<String, u32> {
     frequency
 }
 
+fn set_marker_size(cpu_count: u32) -> usize{
+    let marker_size: usize;
+    if cpu_count <= 64 {
+        marker_size = 6;
+    }
+    else if cpu_count <= 128 {
+        marker_size = 5
+    } 
+    else {
+        marker_size = 3;
+    }
+    marker_size
+}
+
 
 // Get a random color
 fn random_color() -> Rgb {
@@ -190,13 +204,13 @@ fn get_sched_switch_events(actions: &Vec<Action>) -> HashMap<u32, Vec<&Action>> 
     data
 }
 
-fn draw_switch_markers(plot: &mut Plot, switch_markers: ScatterObject, options: &Graph) {
+fn draw_switch_markers(plot: &mut Plot, switch_markers: ScatterObject, options: &Graph, marker_size: usize) {
     if options.events.show_events || options.events.show_switch {
         // draw the switch event notches
         plot.add_trace(Scatter::new(
             switch_markers.xs, switch_markers.ys)
             .mode(Mode::Markers)
-            .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(switch_markers.color_array))
+            .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(switch_markers.color_array).size(marker_size))
             .name(&switch_markers.name)
             .hover_text_array(switch_markers.hover_text)
             .legend_group(switch_markers.name)
@@ -215,7 +229,7 @@ fn draw_switch_markers(plot: &mut Plot, switch_markers: ScatterObject, options: 
 }
 
 
-fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: ColorTable, plot: &mut Plot, switch_markers: &mut ScatterObject, y_axis: &HashMap<u32, u32>, options: &Graph) {
+fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: ColorTable, plot: &mut Plot, switch_markers: &mut ScatterObject, y_axis: &HashMap<u32, u32>, options: &Graph, marker_size: usize) {
     let mut transparent_markers = ScatterObject::new(Mode::Markers, "switch", NamedColor::White);
     for (core, switch_events) in data {
         for item in switch_events.windows(2) {
@@ -266,7 +280,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
     plot.add_trace(
         Scatter::new(transparent_markers.xs, transparent_markers.ys)
             .mode(Mode::Markers)
-            .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(transparent_markers.color_array).opacity(0.0))
+            .marker(Marker::new().symbol(MarkerSymbol::LineNSOpen).color_array(transparent_markers.color_array).opacity(0.0).size(marker_size))
             .hover_text_array(transparent_markers.hover_text)
             .legend_group("switch")
             .hover_info(HoverInfo::Text)
@@ -275,7 +289,7 @@ fn draw_sched_switch(orig: f64, data: HashMap<u32, Vec<&Action>>, color_table: C
     )
 }   
 
-fn draw_migrate_marks(start_time: f64, action: &Action, traces: &mut Vec<Box<dyn Trace>>, legend_group: &str, color: NamedColor, y_axis: &HashMap<u32, u32>, webgl: bool) {
+fn draw_migrate_marks(start_time: f64, action: &Action, traces: &mut Vec<Box<dyn Trace>>, legend_group: &str, color: NamedColor, y_axis: &HashMap<u32, u32>, webgl: bool, marker_size: usize) {
     if let Events::SchedMigrateTask { command, pid, orig_cpu, dest_cpu, .. } = &action.event {
 
         // draw the migrate event lines
@@ -304,10 +318,10 @@ fn draw_migrate_marks(start_time: f64, action: &Action, traces: &mut Vec<Box<dyn
             .show_legend(false);
         if orig_cpu < dest_cpu {
             trace = trace.marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleUp)
-                        .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
+                        .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)).size(marker_size));
         } else {
             trace = trace.marker(Marker::new().color(color).symbol(MarkerSymbol::TriangleDown)
-            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)));
+            .line(Line::new().width(1.0).color(NamedColor::DarkSlateGrey)).size(marker_size));
         }
         traces.push(trace);
     }
@@ -315,7 +329,7 @@ fn draw_migrate_marks(start_time: f64, action: &Action, traces: &mut Vec<Box<dyn
 
 
 // Determine type of migrate event and draw
-fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, traces: &mut Vec<Box<dyn Trace>>, y_axis: &HashMap<u32, u32>, config: &Config, frequency: &mut HashMap<String, u32>) {
+fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32, Wstate>, traces: &mut Vec<Box<dyn Trace>>, y_axis: &HashMap<u32, u32>, config: &Config, frequency: &mut HashMap<String, u32>, marker_size: usize) {
     if let Events::SchedMigrateTask { command: _, pid, orig_cpu, dest_cpu, state: _ } = &action.event {
         let legend_group: &str;
         let color: NamedColor;
@@ -349,7 +363,7 @@ fn classify_migrate_event(start_time: f64, action: &Action, states: &HashMap<u32
                     color = NamedColor::SeaGreen;
                 }
             }
-            draw_migrate_marks(start_time, action, traces, legend_group, color, y_axis, config.graph.webgl);
+            draw_migrate_marks(start_time, action, traces, legend_group, color, y_axis, config.graph.webgl, marker_size);
             frequency.insert(legend_group.to_string(), frequency[legend_group] + 1);
         }
     }
@@ -413,12 +427,12 @@ fn add_event(marker_events: &mut HashMap<String, ScatterObject>, action: &Action
 }
 
 // draw the ScatterObject for marker-only events
-fn draw_marker_event(plot: &mut Plot, marker_events: HashMap<String, ScatterObject>, options: &Graph) {
+fn draw_marker_event(plot: &mut Plot, marker_events: HashMap<String, ScatterObject>, options: &Graph, marker_size: usize) {
     for (_, event) in marker_events {
         let trace = Scatter::new(
             event.xs, event.ys)
             .mode(event.mode)
-            .marker(Marker::new().color(event.color).symbol(MarkerSymbol::LineNSOpen))
+            .marker(Marker::new().color(event.color).symbol(MarkerSymbol::LineNSOpen).size(marker_size))
             .name(&event.name)
             .legend_group(event.name)
             .web_gl_mode(options.webgl)
@@ -454,6 +468,7 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
 
     let options = &config.graph;
     let y_axis = get_y_axis(&config.machine, options.socket_order, reader.cpu_count);
+    let marker_size = set_marker_size(reader.cpu_count);
 
     find_sleep(&mut reader, options);
 
@@ -528,7 +543,7 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
             },
             Events::SchedMigrateTask { .. } => {
                 name = "migrate task";
-                classify_migrate_event(start_time, &action, states, &mut migrate_traces, &y_axis, config, &mut frequency);
+                classify_migrate_event(start_time, &action, states, &mut migrate_traces, &y_axis, config, &mut frequency, marker_size);
             }
             _ => { }
         }
@@ -547,11 +562,11 @@ fn draw_traces(filepath: &str, config: &Config, plot: &mut Plot) -> TraceParser 
     // group and draw switch events
     let switch_events = get_sched_switch_events(&switch_events);
     let mut switch_markers = ScatterObject::new(Mode::LinesMarkers, "switch", NamedColor::White);
-    draw_sched_switch(reader.first_timestamp.unwrap(), switch_events, color_table, plot, &mut switch_markers, &y_axis, options);
-    draw_switch_markers(plot, switch_markers, options);
+    draw_sched_switch(reader.first_timestamp.unwrap(), switch_events, color_table, plot, &mut switch_markers, &y_axis, options, marker_size);
+    draw_switch_markers(plot, switch_markers, options, marker_size);
 
     if options.events.show_events || options.events.show_marker_only {
-        draw_marker_event(plot, marker_events, options);
+        draw_marker_event(plot, marker_events, options, marker_size);
     }
     if options.events.show_events || options.events.show_migrate {
         plot.add_traces(migrate_traces);
